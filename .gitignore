@@ -147,3 +147,5 @@ vite.config.ts.timestamp-*
 client/.netlify/
 .netlify/
 arc/backend/trade-history.json
+.vercel/
+arc/contracts/lib/

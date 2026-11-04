@@ -33,12 +33,22 @@ const BROKER_NAMES = [
 ];
 
 // Map provider ENS names to backend endpoints
-const PROVIDER_TO_ENDPOINT: Record<string, string> = {
+export const PROVIDER_TO_ENDPOINT: Record<string, string> = {
   "market-data": "search", "ai-analysis": "llm", "sentiment": "sentiment",
   "classifier": "classify", "portfolio-data": "data", "embeddings": "embeddings",
   "translator": "translate", "summarizer": "summarize", "chart-analyzer": "vision",
   "compute": "code",
 };
+
+export const ENDPOINT_TO_PROVIDER: Record<string, string> = Object.fromEntries(
+  Object.entries(PROVIDER_TO_ENDPOINT).map(([provider, endpoint]) => [endpoint, provider])
+);
+
+export function parseENSPrice(value: string | null) {
+  if (!value || !/^\d+(\.\d+)?$/.test(value)) return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
 
 async function resolveAgent(name: string): Promise<ENSAgentRecord | null> {
   const ensName = `${name}.${ENS_DOMAIN}`;
@@ -51,33 +61,53 @@ async function resolveAgent(name: string): Promise<ENSAgentRecord | null> {
       ensClient.getEnsText({ name: normalize(ensName), key: "com.agent.providers" }),
     ]);
 
+    const priceUsd = parseENSPrice(price);
+    if (name in PROVIDER_TO_ENDPOINT && priceUsd === null) return null;
     return {
       name, ensName,
       endpoint: PROVIDER_TO_ENDPOINT[name] || name,
-      price: price ? `$${price}` : "$0.000001",
-      priceUsd: price ? parseFloat(price) : 0.000001,
+      price: priceUsd !== null ? `$${price}` : "$0.000001",
+      priceUsd: priceUsd ?? 0.000001,
       capabilities: capabilities || "",
       status: status || "active",
       agentType: agentType || "unknown",
       providers: providers || "",
     };
-  } catch {
-    return null;
+  } catch (cause) {
+    throw new Error(`ENS read failed for ${ensName}`, { cause });
   }
+}
+
+export interface ProviderDiscovery {
+  agents: Pick<ENSAgentRecord, "name" | "priceUsd">[];
+  failed: string[];
+}
+
+export async function discoverProviderPrices(): Promise<ProviderDiscovery> {
+  const results = await Promise.allSettled(PROVIDER_NAMES.map((name) => ensClient.getEnsText({
+    name: normalize(`${name}.${ENS_DOMAIN}`), key: "com.x402.price",
+  })));
+  const agents: ProviderDiscovery["agents"] = [];
+  const failed: string[] = [];
+  results.forEach((result, i) => {
+    if (result.status === "rejected") failed.push(PROVIDER_NAMES[i]);
+    else {
+      const priceUsd = parseENSPrice(result.value);
+      if (priceUsd !== null) agents.push({ name: PROVIDER_NAMES[i], priceUsd });
+    }
+  });
+  return { agents, failed };
 }
 
 export async function discoverProviders(): Promise<ENSAgentRecord[]> {
   console.log(`Discovering providers via ENS (${ENS_DOMAIN})...`);
-  const results = await Promise.all(PROVIDER_NAMES.map(resolveAgent));
-  const active = results.filter((r): r is ENSAgentRecord => r !== null);
-  console.log(`  ${active.length}/${PROVIDER_NAMES.length} providers found`);
-  for (const a of active) console.log(`   ${a.ensName} → ${a.price} | ${a.capabilities}`);
-  return active;
+  const results = await Promise.all(PROVIDER_NAMES.map((name) => resolveAgent(name).catch(() => null)));
+  return results.filter((record): record is ENSAgentRecord => record !== null);
 }
 
 export async function discoverBrokers(): Promise<ENSAgentRecord[]> {
   console.log(`Discovering brokers via ENS (${ENS_DOMAIN})...`);
-  const results = await Promise.all(BROKER_NAMES.map(resolveAgent));
+  const results = await Promise.all(BROKER_NAMES.map((name) => resolveAgent(name).catch(() => null)));
   const active = results.filter((r): r is ENSAgentRecord => r !== null);
   console.log(`  ${active.length}/${BROKER_NAMES.length} brokers found`);
   for (const a of active) console.log(`   ${a.ensName} → providers: ${a.providers}`);

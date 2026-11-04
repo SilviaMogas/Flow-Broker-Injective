@@ -98,7 +98,17 @@ Testnet INJ for gas: https://testnet.faucet.injective.network
 | `app` (dashboard) | `app/` | `/dashboard` (built with `basePath: "/dashboard"` on Vercel) |
 | `backend` | `arc/backend/` | `/api` (Express strips the prefix; paid x402 services stay at `/api/<service>`) |
 
-The browser calls the backend same-origin at `/api`, so no service bindings are needed. On Vercel the backend runs as a function: the WebSocket feed and the long-running broker loops (`POST /start`) are off; REST, x402 and Injective endpoints work. Set `SELLER_KEY` in the Vercel project to enable the paid endpoints. Run all services locally with `vercel dev`.
+The browser calls the backend same-origin at `/api`, so no service bindings are needed. On Vercel the backend runs as a function: WebSockets and long-running broker loops (`POST /start`) are off. The dashboard automatically polls `GET /api/dashboard-state` every 5 seconds instead, shows backend capabilities, and disables Start when broker runs or paid services are unavailable. This is a read-only view of the responding instance's in-memory activity, not durable or cross-instance history. REST, x402 and Injective endpoints remain available. Set `SELLER_KEY` in the Vercel project yourself to enable paid endpoints. Run all services locally with `vercel dev`.
+
+Public Injective endpoints and the paid Injective route share a limit of 60 requests per minute per IP (IPv6 grouped by subnet) per backend instance. A blocked request returns `429`, `Retry-After` and `RateLimit` headers before any upstream lookup or payment check. Markets and chain probes each share an in-flight refresh and a 15-second cache (5 seconds when the upstream reports an error). On Vercel only its edge-supplied client IP header is trusted; on other hosts only the socket IP is trusted. The in-memory limiter is not a deployment-wide quota: use Vercel WAF or a shared store for distributed enforcement.
+
+ENS prices are resolved by provider label (`market-data`, `ai-analysis`, etc.) for their endpoint aliases (`search`, `llm`, etc.). `GET /api/prices` exposes effective endpoint prices; legacy ENS label keys remain available when loaded. A failed price lookup retains the last confirmed price; a successful lookup confirming an absent/invalid record removes it. Explicit defaults for all 11 providers apply where no confirmed price remains. The payment requirement and accounting use the same per-request price.
+
+Backend checks: `cd arc/backend && npm test && npm run typecheck`.
+
+On a long-running backend, each broker run has a cancellation signal. Stop prevents further intelligence/risk calls and queued swaps; it cannot undo payments or transactions already submitted. Start returns `409` until the prior run has drained, and the dashboard shows **Stopping…** during that period. All 11 services, including Injective, remain in the broker catalog when ENS discovery is unavailable; an unknown service is never silently replaced with another provider.
+
+Dashboard Reset clears only the current browser view. HTTP polling filters out activity at or before the clear point and shows subsequent count/volume deltas in the same session, using unrounded snapshot totals before formatting the result. A new backend session restores its own totals normally. No server history is deleted. Injective snapshots are loaded on demand through the single-flight TTL cache; no competing fixed-interval prefetch can delay the next refresh.
 
 ## Project structure
 
@@ -119,4 +129,3 @@ See `arc/backend/src/server.ts` — `BROKER_STRATEGIES` and `executeUniswapTrade
 Each broker has a defined token pair strategy. The Routing API (`/quote` with `routingPreference: BEST_PRICE`) finds optimal paths. Coordination signals fire when risk-on assets are bought.
 
 Real trades on Sepolia: see `arc/backend/trade-history.json`.
-

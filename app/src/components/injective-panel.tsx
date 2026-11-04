@@ -37,37 +37,51 @@ export function InjectivePanel() {
   const [chains, setChains] = useState<ChainStatus[]>([]);
   const [contracts, setContracts] = useState<Record<string, string | null>>({});
   const [error, setError] = useState<string | null>(null);
+  const [chainsStale, setChainsStale] = useState(false);
+  const [marketsStale, setMarketsStale] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    let chainsLoaded = false;
-    const loadChains = () =>
-      fetch(api("/injective/chains"))
-        .then((r) => r.json())
-        .then((j) => {
-          if (!alive) return;
-          setChains(j.chains || []);
-          setContracts(j.contracts || {});
-          chainsLoaded = (j.chains || []).length > 0;
-        })
-        .catch(() => {});
-    const load = async () => {
-      if (!chainsLoaded) loadChains();
-      try {
-        const r = await fetch(api("/injective/markets"));
-        const j = await r.json();
-        if (!alive) return;
-        setMarkets(j.markets || []);
-        setError(j.error || null);
-      } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : String(e));
-      }
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const loadJson = async (path: string) => {
+      const response = await fetch(api(path), {
+        cache: "no-store",
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      return data;
     };
-    load();
-    const id = setInterval(load, 15000);
+    const load = async () => {
+      const [marketResult, chainResult] = await Promise.allSettled([
+        loadJson("/injective/markets"), loadJson("/injective/chains"),
+      ]);
+      if (!alive) return;
+      setChainsStale(chainResult.status === "rejected");
+      setMarketsStale(marketResult.status === "rejected"
+        || (marketResult.status === "fulfilled" && !!marketResult.value.error));
+      const errors: string[] = [];
+      if (marketResult.status === "fulfilled") {
+        setMarkets(marketResult.value.markets || []);
+        if (marketResult.value.error) errors.push(marketResult.value.error);
+      } else {
+        errors.push(`Markets: ${String(marketResult.reason)}`);
+      }
+      if (chainResult.status === "fulfilled") {
+        setChains(chainResult.value.chains || []);
+        setContracts(chainResult.value.contracts || {});
+      } else {
+        errors.push(`Networks: ${String(chainResult.reason)}`);
+      }
+      setError(errors.join("; ") || null);
+      timer = setTimeout(load, 15_000);
+    };
+    void load();
     return () => {
       alive = false;
-      clearInterval(id);
+      controller.abort();
+      clearTimeout(timer);
     };
   }, []);
 
@@ -78,7 +92,7 @@ export function InjectivePanel() {
       <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-4">
         <p className="text-xs font-semibold text-cyan-900 mb-1">Injective provider</p>
         <p className="text-[11px] text-cyan-800">
-          Apex and Titan buy the <span className="font-mono">injective</span> signal over x402. It is computed from the live
+          Apex and Titan are configured to buy the <span className="font-mono">injective</span> signal over x402 when paid broker runs are enabled. It is computed from the live
           Injective mainnet spot orderbook (Injective Indexer), refreshed every 15s.
         </p>
       </div>
@@ -107,7 +121,9 @@ export function InjectivePanel() {
               <div><p className="text-gray-400">Imbalance</p><p>{fmt(m.imbalance, 2)}</p></div>
               <div><p className="text-gray-400">Last</p><p>{fmt(m.lastPrice)} {m.lastTradeDirection ?? ""}</p></div>
             </div>
-            <p className="text-[10px] text-gray-400">Updated {new Date(m.fetchedAt).toLocaleTimeString()}</p>
+            <p className={`text-[10px] ${marketsStale ? "text-amber-700" : "text-gray-400"}`}>
+              {marketsStale ? "Cached snapshot" : "Updated"} {new Date(m.fetchedAt).toLocaleTimeString()}
+            </p>
           </div>
         ))}
       </div>
@@ -119,8 +135,8 @@ export function InjectivePanel() {
             <a key={c.network} href={c.explorer} target="_blank" rel="noopener noreferrer"
               className="flex items-center justify-between px-3 py-2 rounded border border-gray-100 hover:bg-gray-50 text-xs">
               <span className="text-gray-700">{c.name} · chain {c.chainId}</span>
-              <span className={`font-mono text-[10px] ${c.ok ? "text-emerald-600" : "text-red-600"}`}>
-                {c.ok ? `block ${c.blockNumber}` : "unreachable"}
+              <span className={`font-mono text-[10px] ${chainsStale ? "text-amber-700" : c.ok ? "text-emerald-600" : "text-red-600"}`}>
+                {chainsStale ? `Cached block ${c.blockNumber ?? "unknown"}` : c.ok ? `block ${c.blockNumber}` : "unreachable"}
               </span>
             </a>
           ))}

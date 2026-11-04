@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { api } from "./api";
+import { visibleEvents, visibleStats, type StatsData, type DashboardBaseline } from "./dashboard-view";
+export type { StatsData } from "./dashboard-view";
 
 export interface PaymentEvent {
   worker: string;
@@ -17,15 +20,11 @@ export interface PaymentEvent {
   fee?: string;
 }
 
-export interface StatsData {
-  totalPayments: number;
-  totalVolume: string;
-  paymentsPerMin: number;
-  dollarsPerSec: string;
-  activeWorkers: number;
-  gasSaved: string;
-  platformFees: string;
-  elapsed: number;
+export interface BackendCapabilities {
+  sellerConfigured: boolean;
+  websocket: boolean;
+  workerLoops: boolean;
+  statePersistence: "instance";
 }
 
 export interface WorkerEvent {
@@ -57,12 +56,15 @@ export function useWebSocket() {
   const [stats, setStats] = useState<StatsData>({
     totalPayments: 0,
     totalVolume: "0",
+    totalVolumeRaw: "0",
     paymentsPerMin: 0,
     dollarsPerSec: "0",
     activeWorkers: 0,
     gasSaved: "0",
     platformFees: "0",
+    platformFeesRaw: "0",
     elapsed: 0,
+    isRunning: false,
   });
   const [payments, setPayments] = useState<PaymentEvent[]>([]);
   const [workers, setWorkers] = useState<Map<string, WorkerEvent>>(new Map());
@@ -72,38 +74,33 @@ export function useWebSocket() {
   const [trades, setTrades] = useState<any[]>([]);
   const [decisions, setDecisions] = useState<any[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const latestSnapshot = useRef<DashboardBaseline | null>(null);
+  const resetBaseline = useRef<DashboardBaseline | null>(null);
+  const [transport, setTransport] = useState<"connecting" | "websocket" | "polling">("connecting");
+  const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
   const connect = useCallback(() => {
-    if (!WS_URL || wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (!WS_URL || (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN)) return;
 
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
     ws.onopen = () => {
       setConnected(true);
-      setIsComplete(false);
       setError(null);
-      setPayments([]);
-      setStats({
-        totalPayments: 0,
-        totalVolume: "0",
-        paymentsPerMin: 0,
-        dollarsPerSec: "0",
-        activeWorkers: 0,
-        gasSaved: "0",
-        platformFees: "0",
-        elapsed: 0,
-      });
-      setWorkers(new Map());
       console.log("[ws] connected to orchestrator");
     };
 
     ws.onclose = () => {
+      if (wsRef.current !== ws) return;
       setConnected(false);
+      setTransport("polling");
       console.log("🔌 Disconnected from orchestrator");
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       const msg: WSEvent = JSON.parse(event.data);
 
       switch (msg.type) {
@@ -113,6 +110,7 @@ export function useWebSocket() {
           break;
         case "stats":
           setStats(msg.data);
+          setLastUpdated(Date.now());
           break;
         case "cre_log":
           console.log(
@@ -163,11 +161,20 @@ export function useWebSocket() {
           setStats(msg.data);
           setIsComplete(true);
           break;
+        case "started":
+          setStats(msg.data);
+          setIsComplete(false);
+          break;
+        case "stopped":
+          setStats(msg.data);
+          break;
       }
     };
 
     ws.onerror = () => {
-      setError("Backend not connected — start the server with: PORT=3001 WS_PORT=3002 npm run server");
+      if (wsRef.current !== ws) return;
+      ws.close();
+      setTransport("polling");
     };
   }, []);
 
@@ -177,16 +184,20 @@ export function useWebSocket() {
   }, []);
 
   const reset = useCallback(() => {
+    resetBaseline.current = latestSnapshot.current;
     setPayments([]);
     setStats({
       totalPayments: 0,
       totalVolume: "0",
+      totalVolumeRaw: "0",
       paymentsPerMin: 0,
       dollarsPerSec: "0",
       activeWorkers: 0,
       gasSaved: "0",
       platformFees: "0",
+      platformFeesRaw: "0",
       elapsed: 0,
+      isRunning: false,
     });
     setWorkers(new Map());
     setIsComplete(false);
@@ -195,12 +206,81 @@ export function useWebSocket() {
     setDecisions([]);
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      wsRef.current?.close();
+    const controller = new AbortController();
+    const detect = async () => {
+      try {
+        const response = await fetch(api("/health"), {
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(`Backend health: HTTP ${response.status}`);
+        const data: BackendCapabilities = await response.json();
+        if (controller.signal.aborted) return;
+        setCapabilities(data);
+        if (data.websocket && WS_URL) {
+          setTransport("websocket");
+          connect();
+        } else {
+          setTransport("polling");
+        }
+      } catch {
+        if (!controller.signal.aborted) setTransport("polling");
+      }
     };
-  }, []);
+    void detect();
+    return () => {
+      controller.abort();
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
+    };
+  }, [connect]);
+
+  useEffect(() => {
+    if (transport !== "polling") return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const response = await fetch(api("/dashboard-state"), {
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(`Dashboard unavailable (HTTP ${response.status})`);
+        const data = await response.json();
+        if (!data.stats || typeof data.session !== "string" || !data.capabilities || !Array.isArray(data.payments)
+          || !Array.isArray(data.trades) || !Array.isArray(data.decisions)
+          || !Array.isArray(data.priceUpdates)) {
+          throw new Error("Invalid dashboard response");
+        }
+        if (controller.signal.aborted) return;
+        latestSnapshot.current = data;
+        const viewStats = visibleStats(data, resetBaseline.current);
+        setCapabilities(data.capabilities);
+        setStats(viewStats);
+        setIsComplete(!viewStats.isRunning && viewStats.totalPayments > 0);
+        setPayments(visibleEvents<PaymentEvent>(data.payments, data, resetBaseline.current));
+        setTrades(visibleEvents(data.trades, data, resetBaseline.current));
+        setDecisions(visibleEvents(data.decisions, data, resetBaseline.current));
+        setPriceUpdates(visibleEvents<(typeof priceUpdates)[number]>(data.priceUpdates, data, resetBaseline.current));
+        setLastUpdated(data.updatedAt);
+        setConnected(true);
+        setError(null);
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        setConnected(false);
+        setError(e instanceof Error ? e.message : "Dashboard unavailable");
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(poll, 5_000);
+      }
+    };
+    void poll();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [transport]);
 
   return {
     connected,
@@ -215,5 +295,8 @@ export function useWebSocket() {
     priceUpdates,
     trades,
     decisions,
+    transport,
+    capabilities,
+    lastUpdated,
   };
 }
