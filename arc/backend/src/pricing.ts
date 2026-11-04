@@ -1,4 +1,5 @@
 import { ENDPOINT_TO_PROVIDER } from "./ens-resolver.js";
+import type { ENSAgentRecord } from "./ens-resolver.js";
 import type { ServiceConfig } from "./services.js";
 
 export const DEFAULT_PRICES: Record<string, string> = {
@@ -33,4 +34,8 @@ export function serviceConfigs(ensPrices: Record<string, string>): ServiceConfig
     priceUsd: Number(priceFor(service, ensPrices).slice(1)),
     method: ["llm", "translate", "summarize", "vision", "code"].includes(service) ? "POST" : "GET",
   }));
+}
+
+export function discoveredPrices(agents: Pick<ENSAgentRecord, "name" | "priceUsd">[]) {
+  return Object.fromEntries(agents.map((agent) => [agent.name, `$${agent.priceUsd}`]));
 }

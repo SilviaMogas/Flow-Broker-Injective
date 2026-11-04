@@ -206,13 +206,13 @@ export function Dashboard() {
             if (t.id === "ens") {
               try { setEnsPrices(await (await fetch(api("/prices"))).json()); } catch {}
             }
-            if (t.id === "decisions") {
+            if (t.id === "decisions" && transport !== "polling") {
               try {
                 const data = await (await fetch(api("/decisions"))).json();
                 if (data.decisions?.length) setBackendDecisions(data.decisions);
               } catch {}
             }
-            if (t.id === "trades") {
+            if (t.id === "trades" && transport !== "polling") {
               try {
                 const data = await (await fetch(api("/trades"))).json();
                 if (data.trades?.length) setBackendTrades(data.trades);

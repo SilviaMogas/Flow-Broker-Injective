@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ENDPOINT_TO_PROVIDER, parseENSPrice } from "./ens-resolver.js";
-import { DEFAULT_PRICES, listedPrices, priceFor, providerFor, serviceConfigs } from "./pricing.js";
+import { DEFAULT_PRICES, discoveredPrices, listedPrices, priceFor, providerFor, serviceConfigs } from "./pricing.js";
 
 test("every paid endpoint resolves its ENS provider label, not the endpoint alias", () => {
   for (const [endpoint, provider] of Object.entries(ENDPOINT_TO_PROVIDER)) {
@@ -43,4 +43,12 @@ test("broker catalog retains Injective and all providers even without ENS discov
   });
   assert.equal(services.find((service) => service.name === "llm")?.price, "$0.02");
   assert.equal(services.find((service) => service.name === "llm")?.method, "POST");
+});
+
+test("a successful discovery replaces removed ENS prices with the catalog fallback", () => {
+  let prices = discoveredPrices([{ name: "ai-analysis", priceUsd: 0.02 }]);
+  assert.equal(priceFor("llm", prices), "$0.02");
+  prices = discoveredPrices([]);
+  assert.equal(priceFor("llm", prices), "$0.015");
+  assert.equal("ai-analysis" in prices, false);
 });

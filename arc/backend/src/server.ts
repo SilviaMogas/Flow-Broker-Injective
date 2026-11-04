@@ -7,7 +7,7 @@ import { discoverAgents, ENDPOINT_TO_PROVIDER } from "./ens-resolver.js";
 import cors from "cors";
 import { createAsyncCache } from "./async-cache.js";
 import { createInjectiveLimiter } from "./rate-limit.js";
-import { listedPrices, priceFor as resolvePrice, providerFor, serviceConfigs } from "./pricing.js";
+import { discoveredPrices, listedPrices, priceFor as resolvePrice, providerFor, serviceConfigs } from "./pricing.js";
 import {
   INJECTIVE_CONTRACTS,
   getInjectiveChainStatus,
@@ -440,9 +440,7 @@ const priceFor = (service: string) => resolvePrice(service, ensPrices);
 async function loadENSPrices() {
   try {
     const agents = await discoverAgents();
-    for (const a of agents) {
-      ensPrices[a.name] = `$${a.priceUsd}`;
-    }
+    ensPrices = discoveredPrices(agents);
     console.log("ENS prices loaded:", Object.entries(ensPrices).map(([k,v]) => `${k}=${v}`).join(", "));
   } catch (e) {
     console.log("ENS price load failed, using defaults");
@@ -450,11 +448,9 @@ async function loadENSPrices() {
 }
 
 // Load prices on startup and refresh every 30s
-loadENSPrices();
+void loadENSPrices();
 if (START_SERVER) {
-  setInterval(loadENSPrices, 30000);
-  ensureInjectiveMarkets();
-  setInterval(ensureInjectiveMarkets, 15000);
+  setInterval(() => { void loadENSPrices(); }, 30000);
 }
 
 const postServices = ["llm", "translate", "summarize", "vision", "code"];
@@ -640,7 +636,7 @@ app.post("/start", requireSeller, async (_req, res) => {
     }
   };
 
-  Promise.allSettled(workerKeys.map((k, i) => runWorker(i + 1, k))).then(() => {
+  void Promise.allSettled(workerKeys.map((k, i) => runWorker(i + 1, k))).then(() => {
     activeRun = null;
     stats.isRunning = false;
     broadcast({ type: "complete", data: getStats() });
@@ -685,6 +681,7 @@ app.get("/prices", (_req, res) => {
 app.get("/dashboard-state", (_req, res) => {
   res.set("Cache-Control", "no-store");
   res.json({
+    session: currentSessionId,
     capabilities: getCapabilities(),
     stats: getStats(),
     payments: paymentHistory.slice(-500).reverse(),

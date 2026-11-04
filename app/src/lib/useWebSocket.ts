@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
+import { visibleEvents, visibleStats, type StatsData, type DashboardBaseline } from "./dashboard-view";
+export type { StatsData } from "./dashboard-view";
 
 export interface PaymentEvent {
   worker: string;
@@ -16,19 +18,6 @@ export interface PaymentEvent {
   scheme?: string;
   protocol?: string;
   fee?: string;
-}
-
-export interface StatsData {
-  totalPayments: number;
-  totalVolume: string;
-  paymentsPerMin: number;
-  dollarsPerSec: string;
-  activeWorkers: number;
-  gasSaved: string;
-  platformFees: string;
-  elapsed: number;
-  isRunning: boolean;
-  isStopping?: boolean;
 }
 
 export interface BackendCapabilities {
@@ -83,6 +72,8 @@ export function useWebSocket() {
   const [trades, setTrades] = useState<any[]>([]);
   const [decisions, setDecisions] = useState<any[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const latestSnapshot = useRef<DashboardBaseline | null>(null);
+  const resetBaseline = useRef<DashboardBaseline | null>(null);
   const [transport, setTransport] = useState<"connecting" | "websocket" | "polling">("connecting");
   const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -191,6 +182,7 @@ export function useWebSocket() {
   }, []);
 
   const reset = useCallback(() => {
+    resetBaseline.current = latestSnapshot.current;
     setPayments([]);
     setStats({
       totalPayments: 0,
@@ -253,19 +245,21 @@ export function useWebSocket() {
         });
         if (!response.ok) throw new Error(`Dashboard unavailable (HTTP ${response.status})`);
         const data = await response.json();
-        if (!data.stats || !data.capabilities || !Array.isArray(data.payments)
+        if (!data.stats || typeof data.session !== "string" || !data.capabilities || !Array.isArray(data.payments)
           || !Array.isArray(data.trades) || !Array.isArray(data.decisions)
           || !Array.isArray(data.priceUpdates)) {
           throw new Error("Invalid dashboard response");
         }
         if (controller.signal.aborted) return;
+        latestSnapshot.current = data;
+        const viewStats = visibleStats(data, resetBaseline.current);
         setCapabilities(data.capabilities);
-        setStats(data.stats);
-        setIsComplete(!data.stats.isRunning && data.stats.totalPayments > 0);
-        setPayments(data.payments);
-        setTrades(data.trades);
-        setDecisions(data.decisions);
-        setPriceUpdates(data.priceUpdates);
+        setStats(viewStats);
+        setIsComplete(!viewStats.isRunning && viewStats.totalPayments > 0);
+        setPayments(visibleEvents<PaymentEvent>(data.payments, data, resetBaseline.current));
+        setTrades(visibleEvents(data.trades, data, resetBaseline.current));
+        setDecisions(visibleEvents(data.decisions, data, resetBaseline.current));
+        setPriceUpdates(visibleEvents<(typeof priceUpdates)[number]>(data.priceUpdates, data, resetBaseline.current));
         setLastUpdated(data.updatedAt);
         setConnected(true);
         setError(null);
