@@ -33,12 +33,22 @@ const BROKER_NAMES = [
 ];
 
 // Map provider ENS names to backend endpoints
-const PROVIDER_TO_ENDPOINT: Record<string, string> = {
+export const PROVIDER_TO_ENDPOINT: Record<string, string> = {
   "market-data": "search", "ai-analysis": "llm", "sentiment": "sentiment",
   "classifier": "classify", "portfolio-data": "data", "embeddings": "embeddings",
   "translator": "translate", "summarizer": "summarize", "chart-analyzer": "vision",
   "compute": "code",
 };
+
+export const ENDPOINT_TO_PROVIDER: Record<string, string> = Object.fromEntries(
+  Object.entries(PROVIDER_TO_ENDPOINT).map(([provider, endpoint]) => [endpoint, provider])
+);
+
+export function parseENSPrice(value: string | null) {
+  if (!value || !/^\d+(\.\d+)?$/.test(value)) return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
 
 async function resolveAgent(name: string): Promise<ENSAgentRecord | null> {
   const ensName = `${name}.${ENS_DOMAIN}`;
@@ -51,11 +61,13 @@ async function resolveAgent(name: string): Promise<ENSAgentRecord | null> {
       ensClient.getEnsText({ name: normalize(ensName), key: "com.agent.providers" }),
     ]);
 
+    const priceUsd = parseENSPrice(price);
+    if (name in PROVIDER_TO_ENDPOINT && priceUsd === null) return null;
     return {
       name, ensName,
       endpoint: PROVIDER_TO_ENDPOINT[name] || name,
-      price: price ? `$${price}` : "$0.000001",
-      priceUsd: price ? parseFloat(price) : 0.000001,
+      price: priceUsd !== null ? `$${price}` : "$0.000001",
+      priceUsd: priceUsd ?? 0.000001,
       capabilities: capabilities || "",
       status: status || "active",
       agentType: agentType || "unknown",

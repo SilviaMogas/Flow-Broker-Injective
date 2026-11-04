@@ -3,9 +3,11 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { discoverAgents, toServiceConfigs } from "./ens-resolver.js";
-import { SERVICES as FALLBACK_SERVICES } from "./services.js";
+import { discoverAgents, ENDPOINT_TO_PROVIDER } from "./ens-resolver.js";
 import cors from "cors";
+import { createAsyncCache } from "./async-cache.js";
+import { createInjectiveLimiter } from "./rate-limit.js";
+import { listedPrices, priceFor as resolvePrice, providerFor, serviceConfigs } from "./pricing.js";
 import {
   INJECTIVE_CONTRACTS,
   getInjectiveChainStatus,
@@ -16,6 +18,8 @@ import {
 
 // On Vercel the backend runs as a function: no app.listen, no separate WebSocket port, no background timers.
 const ON_VERCEL = !!process.env.VERCEL;
+const START_SERVER = !ON_VERCEL && process.env.NODE_ENV !== "test";
+let activeRun: AbortController | null = null;
 
 // Without SELLER_KEY the read-only and Injective endpoints still work; paid and Gateway endpoints return 503.
 const SELLER_KEY = process.env.SELLER_KEY as `0x${string}` | undefined;
@@ -45,6 +49,9 @@ app.use((req, _res, next) => {
   }
   next();
 });
+
+const injectiveLimiter = createInjectiveLimiter(ON_VERCEL);
+app.use(["/injective", "/api/injective"], injectiveLimiter);
 
 function requireSeller(_req: any, res: any, next: any) {
   if (!SELLER_KEY || !SELLER_ADDRESS) {
@@ -152,18 +159,19 @@ try {
 } catch { /* no history yet */ }
 
 let tradeQueue: Promise<any> = Promise.resolve();
-async function executeUniswapTrade(brokerName: string, signal: string, confidence: string) {
+async function executeUniswapTrade(brokerName: string, signal: string, confidence: string, cancellation: AbortSignal) {
+  if (cancellation.aborted) return null;
   if (!UNISWAP_API_KEY || sessionTradeCount >= MAX_TRADES_PER_SESSION) return null;
   if (signal !== "BUY" && signal !== "EXECUTE_BUY") return null;
 
   // Queue trades sequentially (one at a time, but none are dropped)
-  const myTrade = tradeQueue.then(() => _doTrade(brokerName, signal, confidence));
+  const myTrade = tradeQueue.then(() => _doTrade(brokerName, signal, confidence, cancellation));
   tradeQueue = myTrade.catch(() => {});
   return myTrade;
 }
 
-async function _doTrade(brokerName: string, signal: string, confidence: string) {
-  if (sessionTradeCount >= MAX_TRADES_PER_SESSION) return null;
+async function _doTrade(brokerName: string, signal: string, confidence: string, cancellation: AbortSignal) {
+  if (cancellation.aborted || sessionTradeCount >= MAX_TRADES_PER_SESSION) return null;
 
   const traderKey = process.env.DEPLOYER_KEY as `0x${string}`;
   if (!traderKey) return null;
@@ -183,6 +191,7 @@ async function _doTrade(brokerName: string, signal: string, confidence: string) 
 
     // 1. Quote — use Uniswap Routing API for best price
     const quoteRes = await fetch(`${UNISWAP_URL}/quote`, {
+      signal: cancellation,
       method: "POST",
       headers: { "x-api-key": UNISWAP_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -201,6 +210,7 @@ async function _doTrade(brokerName: string, signal: string, confidence: string) 
 
     // 2. Get swap tx
     const swapRes = await fetch(`${UNISWAP_URL}/swap`, {
+      signal: cancellation,
       method: "POST",
       headers: { "x-api-key": UNISWAP_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ quote: quoteData.quote }),
@@ -217,6 +227,7 @@ async function _doTrade(brokerName: string, signal: string, confidence: string) 
     const pub = cpc({ chain: sepolia, transport: httpT(SEPOLIA_RPC) });
 
     const tx = swapData.swap;
+    if (cancellation.aborted) return null;
     const hash = await wallet.sendTransaction({
       to: tx.to, data: tx.data, value: BigInt(tx.value), gas: 350000n,
     });
@@ -275,8 +286,9 @@ async function _doTrade(brokerName: string, signal: string, confidence: string) 
 
 // WebSocket
 const wsClients = new Set<WebSocket>();
+const priceUpdates: any[] = [];
 
-if (!ON_VERCEL) {
+if (START_SERVER) {
   const wss = new WebSocketServer({ port: WS_PORT, host: "0.0.0.0" });
   wss.on("connection", (ws) => {
     wsClients.add(ws);
@@ -286,6 +298,10 @@ if (!ON_VERCEL) {
 }
 
 function broadcast(event: any) {
+  if (event.type === "ens_update") {
+    priceUpdates.unshift(event.data);
+    priceUpdates.splice(20);
+  }
   const msg = JSON.stringify(event);
   for (const ws of wsClients) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
@@ -304,8 +320,18 @@ function getStats() {
     platformFees: stats.totalFees.toFixed(4),
     elapsed: Math.round(elapsed),
     isRunning: stats.isRunning,
+    isStopping: !!activeRun?.signal.aborted,
     totalTrades: stats.totalTrades,
     maxTrades: MAX_TRADES_PER_SESSION,
+  };
+}
+
+function getCapabilities() {
+  return {
+    sellerConfigured: !!SELLER_KEY,
+    websocket: !ON_VERCEL,
+    workerLoops: !ON_VERCEL,
+    statePersistence: "instance",
   };
 }
 
@@ -317,31 +343,26 @@ app.get("/health", (_req, res) => {
     chain: "arc-testnet",
     chains: ["arc-testnet", "injective-testnet", "injective-mainnet"],
     services: serviceNames.length,
-    sellerConfigured: !!SELLER_KEY,
-    websocket: !ON_VERCEL,
+    ...getCapabilities(),
     wsClients: wsClients.size,
   });
 });
 
 // ── Injective ──
-let injectiveFetchedAt = 0;
-let injectiveRefresh: Promise<unknown> | null = null;
-async function ensureInjectiveMarkets() {
-  if (Date.now() - injectiveFetchedAt <= 15_000) return;
-  injectiveRefresh ??= refreshInjectiveMarkets().finally(() => {
-    // A failed refresh retries after 5 s instead of 15 s.
-    injectiveFetchedAt = getInjectiveMarkets().error ? Date.now() - 10_000 : Date.now();
-    injectiveRefresh = null;
-  });
-  await injectiveRefresh;
-}
+const ensureInjectiveMarkets = createAsyncCache(
+  refreshInjectiveMarkets, 15_000, () => !getInjectiveMarkets().error,
+);
+const cachedChainStatus = createAsyncCache(
+  getInjectiveChainStatus, 15_000, (chains) => chains.every((chain) => chain.ok),
+);
 
 async function requireInjectiveData(_req: any, res: any, next: any) {
   await ensureInjectiveMarkets();
   const { markets, error } = getInjectiveMarkets();
-  if (!markets.length) {
+  if (error || !markets.some((market) => market.ticker === "INJ/USDT" && market.mid !== null)) {
     return res.status(503).json({ error: `Injective market data unavailable: ${error ?? "no snapshot"}` });
   }
+  res.locals.injectiveResponse = injectiveServiceData();
   next();
 }
 
@@ -352,7 +373,7 @@ app.get("/injective/markets", async (_req, res) => {
 });
 
 app.get("/injective/chains", async (_req, res) => {
-  res.json({ chains: await getInjectiveChainStatus(), contracts: INJECTIVE_CONTRACTS });
+  res.json({ chains: await cachedChainStatus(), contracts: INJECTIVE_CONTRACTS });
 });
 
 // Service definitions (prices loaded from ENS on startup)
@@ -412,11 +433,9 @@ function getServiceData(name: string): { data: any; insight: string } {
   return map[name] || { data: { value: "received" }, insight: "data processed" };
 }
 
-// Prices from ENS (refreshed periodically)
+// Prices from ENS (refreshed periodically), keyed by ENS provider label (e.g. "market-data").
 let ensPrices: Record<string, string> = {};
-// Providers not discovered through ENS keep their listed price.
-const DEFAULT_PRICES: Record<string, string> = { injective: "$0.001" };
-const priceFor = (name: string) => ensPrices[name] || DEFAULT_PRICES[name] || "$0.000001";
+const priceFor = (service: string) => resolvePrice(service, ensPrices);
 
 async function loadENSPrices() {
   try {
@@ -432,10 +451,10 @@ async function loadENSPrices() {
 
 // Load prices on startup and refresh every 30s
 loadENSPrices();
-if (!ON_VERCEL) {
+if (START_SERVER) {
   setInterval(loadENSPrices, 30000);
-  refreshInjectiveMarkets();
-  setInterval(refreshInjectiveMarkets, 15000);
+  ensureInjectiveMarkets();
+  setInterval(ensureInjectiveMarkets, 15000);
 }
 
 const postServices = ["llm", "translate", "summarize", "vision", "code"];
@@ -446,13 +465,14 @@ for (const name of serviceNames) {
   
   const handler = async (req: any, res: any) => {
     const payment = req.payment!;
-    const price = priceFor(name);
+    const price = res.locals.price as string;
     stats.totalPayments++;
     const priceNum = parseFloat(price.replace("$", ""));
     const fee = priceNum * PLATFORM_FEE_PCT;
     stats.totalVolume += priceNum;
     stats.totalFees += fee;
 
+    const response = name === "injective" ? res.locals.injectiveResponse : getServiceData(name);
     const paymentRecord = {
       worker: payment.payer,
       service: name,
@@ -461,7 +481,7 @@ for (const name of serviceNames) {
       verified: payment.verified,
       transaction: payment.transaction || null,
       fee: `$${fee.toFixed(8)}`,
-      insight: getServiceData(name).insight,
+      insight: response.insight,
       scheme: "GatewayWalletBatched",
       protocol: "x402",
       timestamp: Date.now(),
@@ -472,13 +492,14 @@ for (const name of serviceNames) {
     broadcast({ type: "payment", data: paymentRecord });
     broadcast({ type: "stats", data: getStats() });
 
-    const { data: responseData, insight } = getServiceData(name);
+    const { data: responseData, insight } = response;
     res.json({ service: name, insight, ...responseData });
   };
 
   // Dynamic pricing - create fresh gateway middleware each request with current ENS price
   const priceMiddleware = (req: any, res: any, next: any) => {
     const price = priceFor(name);
+    res.locals.price = price;
     const freshGateway = createGatewayMiddleware({ sellerAddress: SELLER_ADDRESS! });
     freshGateway.require(price)(req, res, next);
   };
@@ -496,12 +517,16 @@ app.post("/start", requireSeller, async (_req, res) => {
   if (ON_VERCEL) {
     return res.status(501).json({ error: "Broker worker loops need a long-running host; they do not run inside Vercel Functions" });
   }
-  if (stats.isRunning) return res.json({ error: "already running" });
+  if (activeRun) return res.status(409).json({ error: "Previous broker run is still active or stopping" });
+  const run = new AbortController();
+  activeRun = run;
 
   stats.isRunning = true;
   stats.startTime = Date.now();
   stats.totalPayments = 0;
   stats.totalVolume = 0;
+  stats.totalFees = 0;
+  stats.activeWorkers = 0;
   stats.totalTrades = 0;
   sessionTradeCount = 0;
   // Keep trade/decision history — tagged by session
@@ -520,11 +545,8 @@ app.post("/start", requireSeller, async (_req, res) => {
   const CYCLES = parseInt(_req.body?.cycles) || 63; // default ~500 txs (8*63=504)
 
   // Discover services via ENS
-  let SERVICES = FALLBACK_SERVICES;
-  try {
-    const ensAgents = await discoverAgents();
-    if (ensAgents.length > 0) SERVICES = toServiceConfigs(ensAgents, `http://localhost:${PORT}`);
-  } catch {}
+  await loadENSPrices();
+  const SERVICES = serviceConfigs(ensPrices);
 
   res.json({ status: "started", workers: NUM_WORKERS, cycles: CYCLES });
 
@@ -547,74 +569,79 @@ app.post("/start", requireSeller, async (_req, res) => {
   ];
 
   const runWorker = async (idx: number, key: `0x${string}`) => {
+    if (run.signal.aborted) return;
     const client = new GatewayClient({ chain: "arcTestnet", privateKey: key });
     const broker = brokers[idx - 1] || brokers[0];
 
     const bal = await client.getBalances();
+    if (run.signal.aborted) return;
     if (bal.gateway.available < 100n) {
       try { await client.deposit("0.10"); } catch { return; }
     }
+    if (run.signal.aborted) return;
 
     stats.activeWorkers++;
     broadcast({ type: "worker_joined", data: { name: broker.name, address: privateKeyToAccount(key).address } });
 
     let cycleIntelligence: { provider: string; insight: string; data: any }[] = [];
 
-    for (let c = 0; c < CYCLES; c++) {
-      // Pick from this broker's specific providers
-      const providerName = broker.providers[Math.floor(Math.random() * broker.providers.length)];
-      const svc = SERVICES.find(s => s.name === providerName) || SERVICES[0];
-      try {
-        const url = `http://localhost:${PORT}${svc.endpoint}${svc.method === "GET" ? "?q=c" + c : ""}`;
-        const opts = svc.method === "POST"
-          ? { method: "POST" as const, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${broker.name} cycle ${c}` }) }
-          : undefined;
-        await client.pay(url, opts);
-        // Collect intelligence from this call
-        const svcData = getServiceData(providerName);
-        cycleIntelligence.push({ provider: providerName, insight: svcData.insight, data: svcData.data });
-      } catch {}
-
-      // Risk manager validates after every 5 calls → if BUY signal, execute Uniswap trade
-      if (c % 5 === 4 && broker.name !== "risk-manager") {
+    try {
+      for (let c = 0; c < CYCLES && !run.signal.aborted; c++) {
+        const providerName = broker.providers[Math.floor(Math.random() * broker.providers.length)];
+        const svc = SERVICES.find(s => s.name === providerName);
+        if (!svc) continue;
         try {
-          const rmSvc = SERVICES.find(s => s.name === "llm") || SERVICES[0];
-          const rmUrl = `http://localhost:${PORT}${rmSvc.endpoint}`;
-          await client.pay(rmUrl, { method: "POST" as const, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `risk-check for ${broker.name}` }) });
+          const url = `http://localhost:${PORT}${svc.endpoint}${svc.method === "GET" ? "?q=c" + c : ""}`;
+          const opts = svc.method === "POST"
+            ? { method: "POST" as const, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `${broker.name} cycle ${c}` }) }
+            : undefined;
+          await client.pay(url, opts);
+          const svcData = getServiceData(providerName);
+          cycleIntelligence.push({ provider: providerName, insight: svcData.insight, data: svcData.data });
         } catch {}
+        if (run.signal.aborted) break;
 
-        // Aggregate signal from collected intelligence
-        const cycleSignal = getServiceData("summarize");
-        const decision = {
-          broker: broker.name,
+        if (c % 5 === 4 && broker.name !== "risk-manager") {
+          try {
+            const rmSvc = SERVICES.find(s => s.name === "llm");
+            if (rmSvc) {
+              const rmUrl = `http://localhost:${PORT}${rmSvc.endpoint}`;
+              await client.pay(rmUrl, { method: "POST" as const, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: `risk-check for ${broker.name}` }) });
+            }
+          } catch {}
+          if (run.signal.aborted) break;
 
-          cycle: Math.floor(c / 5) + 1,
-          intelligence: cycleIntelligence.slice(-5),
-          signal: cycleSignal.data.decision,
-          confidence: cycleSignal.data.summary,
-          trade: null as any,
-          timestamp: Date.now(),
-        };
+          const cycleSignal = getServiceData("summarize");
+          const decision = {
+            broker: broker.name,
+            cycle: Math.floor(c / 5) + 1,
+            intelligence: cycleIntelligence.slice(-5),
+            signal: cycleSignal.data.decision,
+            confidence: cycleSignal.data.summary,
+            trade: null as any,
+            timestamp: Date.now(),
+          };
 
-        // Execute trade if BUY
-        if (cycleSignal.data.decision === "EXECUTE_BUY") {
-          const trade = await executeUniswapTrade(broker.name, cycleSignal.data.decision, cycleSignal.data.summary || "");
-          if (trade) decision.trade = { txHash: trade.txHash, amountOut: trade.amountOut, explorer: trade.explorer };
+          if (cycleSignal.data.decision === "EXECUTE_BUY") {
+            const trade = await executeUniswapTrade(broker.name, cycleSignal.data.decision, cycleSignal.data.summary || "", run.signal);
+            if (trade) decision.trade = { txHash: trade.txHash, amountOut: trade.amountOut, explorer: trade.explorer };
+          }
+
+          decisionHistory.push(decision);
+          broadcast({ type: "broker_decision", data: decision });
+          cycleIntelligence = [];
         }
 
-        decisionHistory.push(decision);
-        broadcast({ type: "broker_decision", data: decision });
-        cycleIntelligence = [];
+        await new Promise(r => setTimeout(r, 200 + Math.random() * 400));
       }
-
-      await new Promise(r => setTimeout(r, 200 + Math.random() * 400));
+    } finally {
+      stats.activeWorkers--;
+      broadcast({ type: "worker_finished", data: { name: broker.name } });
     }
-
-    stats.activeWorkers--;
-    broadcast({ type: "worker_finished", data: { name: broker.name } });
   };
 
-  Promise.all(workerKeys.map((k, i) => runWorker(i + 1, k))).then(() => {
+  Promise.allSettled(workerKeys.map((k, i) => runWorker(i + 1, k))).then(() => {
+    activeRun = null;
     stats.isRunning = false;
     broadcast({ type: "complete", data: getStats() });
   });
@@ -652,7 +679,20 @@ app.get("/registry", async (_req, res) => {
 
 // Current ENS prices
 app.get("/prices", (_req, res) => {
-  res.json({ ...DEFAULT_PRICES, ...ensPrices });
+  res.json(listedPrices(ensPrices));
+});
+
+app.get("/dashboard-state", (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    capabilities: getCapabilities(),
+    stats: getStats(),
+    payments: paymentHistory.slice(-500).reverse(),
+    trades: tradeHistory.slice(-30).reverse(),
+    decisions: decisionHistory.slice(-50).reverse(),
+    priceUpdates,
+    updatedAt: Date.now(),
+  });
 });
 
 // Payment history (kept in memory for demo)
@@ -693,7 +733,8 @@ app.get("/gateway-status", requireSeller, async (_req, res) => {
 
 // ENS price change
 app.post("/change-price", async (req, res) => {
-  const { agent, newPrice } = req.body;
+  const { agent: requestedAgent, newPrice } = req.body;
+  const agent = typeof requestedAgent === "string" ? providerFor(requestedAgent) : "";
   if (!agent || !newPrice) return res.status(400).json({ error: "need agent and newPrice" });
 
   try {
@@ -722,7 +763,7 @@ app.post("/change-price", async (req, res) => {
     });
 
     // Immediately update local price cache
-    ensPrices[agent] = `$${newPrice}`;
+    ensPrices[providerFor(agent)] = `$${newPrice}`;
     console.log(`ENS price updated: ${agent} = $${newPrice} (tx: ${hash.slice(0, 14)}...)`);
 
     broadcast({
@@ -770,7 +811,8 @@ app.post("/update-prices", async (_req, res) => {
   const RESOLVER = "0xE99638b40E4Fff0129D56f03b55b6bbC4BBE49b5" as `0x${string}`;
   const results: any[] = [];
 
-  for (const { agent, price } of prices) {
+  for (const { agent: requestedAgent, price } of prices) {
+    const agent = providerFor(requestedAgent);
     try {
       const node = namehash(normalize(`${agent}.flowbroker.eth`));
       const hash = await wallet.writeContract({
@@ -780,7 +822,7 @@ app.post("/update-prices", async (_req, res) => {
         args: [node, "com.x402.price", price],
       });
 
-      ensPrices[agent] = `$${price}`;
+      ensPrices[providerFor(agent)] = `$${price}`;
       creLog("dynamic-pricing", "INFO", `[CRE] ENS updated: ${agent} → $${price} (tx: ${hash.slice(0, 14)}...)`);
       broadcast({ type: "ens_update", data: { agent: `${agent}.flowbroker.eth`, key: "com.x402.price", value: price, tx: hash, timestamp: Date.now() } });
       results.push({ agent, price, tx: hash, success: true });
@@ -895,10 +937,12 @@ app.post("/cre-run", async (_req, res) => {
       const ethPrice = priceData?.ethereum?.usd || 2000;
       creLog("dynamic-pricing", "INFO", `[USER LOG] ETH/USD: $${ethPrice}`);
       
-      const agentPrices = serviceNames.map(name => {
-        const base = parseFloat((ensPrices[name] || DEFAULT_PRICES[name] || "$0.001").replace("$", ""));
+      // Only ENS-registered providers can have their price record updated.
+      const agentPrices = serviceNames.filter(name => name in ENDPOINT_TO_PROVIDER).map(name => {
+        const currentPrice = priceFor(name);
+        const base = parseFloat(currentPrice.replace("$", ""));
         const adj = Math.max(-0.5, Math.min(0.5, (ethPrice - 2000) / 20000));
-        return { agent: name, currentPrice: ensPrices[name] || DEFAULT_PRICES[name] || "$0.001", adjustedPrice: `$${(base * (1 + adj)).toFixed(6)}` };
+        return { agent: providerFor(name), currentPrice, adjustedPrice: `$${(base * (1 + adj)).toFixed(6)}` };
       });
 
       creLog("dynamic-pricing", "INFO", `[USER LOG] Prices: [${agentPrices.map(p => p.adjustedPrice).join(", ")}]`);
@@ -1050,12 +1094,13 @@ app.get("/coordination", (_req, res) => {
 
 // STOP endpoint
 app.post("/stop", (_req, res) => {
+  activeRun?.abort();
   stats.isRunning = false;
   broadcast({ type: "stopped", data: getStats() });
   res.json({ status: "stopped" });
 });
 
-if (!ON_VERCEL) {
+if (START_SERVER) {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`PerkMesh server on :${PORT} (API) + :${WS_PORT} (WS)`);
     console.log(`${serviceNames.length} services, seller: ${SELLER_ADDRESS ?? "not configured"}`);

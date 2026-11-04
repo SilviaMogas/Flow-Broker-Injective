@@ -14,8 +14,9 @@ import { LiveTicker } from "@/components/live-ticker";
 const MAX_TRADES = 20;
 
 export function Dashboard() {
-  const { connected, stats, payments, isComplete, connect, disconnect, reset, error, priceUpdates, trades, decisions } = useWebSocket();
-  const isRunning = connected && !isComplete;
+  const { connected, stats, payments, isComplete, reset, error, priceUpdates, trades, decisions, transport, capabilities, lastUpdated } = useWebSocket();
+  const isRunning = connected && stats.isRunning;
+  const canRun = connected && !stats.isStopping && !!capabilities?.workerLoops && !!capabilities?.sellerConfigured;
   const [txCount, setTxCount] = useState("200");
   const [profile, setProfile] = useState("balanced");
   const [tab, setTab] = useState<"flow" | "calls" | "decisions" | "trades" | "settlement" | "cre" | "ens" | "injective" | "verify" | "bounty">("flow");
@@ -30,6 +31,8 @@ export function Dashboard() {
   const [priceAgent, setPriceAgent] = useState("search");
   const [newPrice, setNewPrice] = useState("0.0005");
   const [priceResult, setPriceResult] = useState("");
+  const [controlError, setControlError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
 
   // Auto-refresh gateway status while running
   useEffect(() => {
@@ -43,19 +46,22 @@ export function Dashboard() {
   }, [isRunning, isComplete]);
 
   const handleStart = async () => {
-    if (connected) {
-      disconnect();
-      if (isComplete) reset();
-      return;
-    }
-    connect();
+    if (!canRun || starting) return;
+    setStarting(true);
+    setControlError(null);
     try {
-      await fetch(api("/start"), {
+      const response = await fetch(api(isRunning ? "/stop" : "/start"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cycles: Math.ceil(parseInt(txCount) / 8), profile }),
       });
-    } catch {}
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+    } catch (e) {
+      setControlError(e instanceof Error ? e.message : "Unable to change broker state");
+    } finally {
+      setStarting(false);
+    }
   };
 
   const TABS = [
@@ -115,34 +121,47 @@ export function Dashboard() {
   return (
     <div className="w-full max-w-[1600px] mx-auto px-6 py-5 space-y-5">
       {/* Controls */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-gray-500" role="status">
+          {connected ? (transport === "polling" ? "HTTP polling · every 5s" : "WebSocket connected") : "Backend disconnected"}
+          {lastUpdated && ` · Updated ${new Date(lastUpdated).toLocaleTimeString()}`}
+        </p>
         <div className="flex items-center gap-3">
-          {!connected && (
+          {!isRunning && (
             <input value={txCount} onChange={e => setTxCount(e.target.value)}
+              aria-label="Number of intelligence calls" disabled={!canRun}
               className="w-16 border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-center font-mono focus:outline-none focus:ring-2 focus:ring-gray-200" />
           )}
-          {isComplete && !connected && (
+          {isComplete && !isRunning && (
             <button onClick={() => { reset(); setBackendTrades([]); setBackendDecisions([]); }}
               className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200">
               Reset
             </button>
           )}
-          <button onClick={handleStart}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
-              connected
+          <button onClick={handleStart} disabled={!canRun || starting}
+            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+              isRunning
                 ? "bg-red-50 text-red-600 hover:bg-red-100"
                 : "bg-gray-900 text-white hover:bg-gray-800"
             }`}>
-            {connected ? "Stop" : "Start"}
+            {stats.isStopping ? "Stopping…" : starting ? "Please wait…" : isRunning ? "Stop" : "Start"}
           </button>
         </div>
       </div>
 
+      {capabilities && (
+        <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 space-y-1">
+          {!capabilities.workerLoops && <p>Read-only deployment: broker runs require a long-running backend. Start is disabled here.</p>}
+          {!capabilities.sellerConfigured && <p>Paid services are not configured on this backend. Public Injective market data remains available.</p>}
+          <p>Activity is in-memory for the responding backend instance, not a persistent account history. Other provider signals are simulated; Injective uses live orderbook data.</p>
+        </div>
+      )}
+
       {/* Error Banner */}
-      {error && (
+      {(error || controlError) && (
         <div className="flex items-center gap-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-lg">
           <div className="w-2 h-2 rounded-full bg-red-500" />
-          <span className="text-xs text-red-700">{error}</span>
+          <span className="text-xs text-red-700">{controlError || error}</span>
         </div>
       )}
 
