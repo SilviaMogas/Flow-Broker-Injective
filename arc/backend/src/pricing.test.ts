@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ENDPOINT_TO_PROVIDER, parseENSPrice } from "./ens-resolver.js";
-import { DEFAULT_PRICES, discoveredPrices, listedPrices, priceFor, providerFor, serviceConfigs } from "./pricing.js";
+import { DEFAULT_PRICES, discoveredPrices, listedPrices, priceFor, providerFor, refreshedPrices, serviceConfigs } from "./pricing.js";
 
 test("every paid endpoint resolves its ENS provider label, not the endpoint alias", () => {
   for (const [endpoint, provider] of Object.entries(ENDPOINT_TO_PROVIDER)) {
@@ -51,4 +51,14 @@ test("a successful discovery replaces removed ENS prices with the catalog fallba
   prices = discoveredPrices([]);
   assert.equal(priceFor("llm", prices), "$0.015");
   assert.equal("ai-analysis" in prices, false);
+});
+
+test("RPC failure preserves a confirmed price; confirmed removal does not", () => {
+  const confirmed = { "ai-analysis": "$0.02", "market-data": "$0.000005" };
+  const duringOutage = refreshedPrices(confirmed, { agents: [], failed: ["ai-analysis"] });
+  assert.equal(priceFor("llm", duringOutage), "$0.02");
+  assert.equal(priceFor("search", duringOutage), DEFAULT_PRICES.search);
+  const afterRemoval = refreshedPrices(duringOutage, { agents: [], failed: [] });
+  assert.equal(priceFor("llm", afterRemoval), DEFAULT_PRICES.llm);
+  assert.equal(priceFor("injective", duringOutage), "$0.001");
 });

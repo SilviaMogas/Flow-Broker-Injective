@@ -73,23 +73,41 @@ async function resolveAgent(name: string): Promise<ENSAgentRecord | null> {
       agentType: agentType || "unknown",
       providers: providers || "",
     };
-  } catch {
-    return null;
+  } catch (cause) {
+    throw new Error(`ENS read failed for ${ensName}`, { cause });
   }
+}
+
+export interface ProviderDiscovery {
+  agents: Pick<ENSAgentRecord, "name" | "priceUsd">[];
+  failed: string[];
+}
+
+export async function discoverProviderPrices(): Promise<ProviderDiscovery> {
+  const results = await Promise.allSettled(PROVIDER_NAMES.map((name) => ensClient.getEnsText({
+    name: normalize(`${name}.${ENS_DOMAIN}`), key: "com.x402.price",
+  })));
+  const agents: ProviderDiscovery["agents"] = [];
+  const failed: string[] = [];
+  results.forEach((result, i) => {
+    if (result.status === "rejected") failed.push(PROVIDER_NAMES[i]);
+    else {
+      const priceUsd = parseENSPrice(result.value);
+      if (priceUsd !== null) agents.push({ name: PROVIDER_NAMES[i], priceUsd });
+    }
+  });
+  return { agents, failed };
 }
 
 export async function discoverProviders(): Promise<ENSAgentRecord[]> {
   console.log(`Discovering providers via ENS (${ENS_DOMAIN})...`);
-  const results = await Promise.all(PROVIDER_NAMES.map(resolveAgent));
-  const active = results.filter((r): r is ENSAgentRecord => r !== null);
-  console.log(`  ${active.length}/${PROVIDER_NAMES.length} providers found`);
-  for (const a of active) console.log(`   ${a.ensName} → ${a.price} | ${a.capabilities}`);
-  return active;
+  const results = await Promise.all(PROVIDER_NAMES.map((name) => resolveAgent(name).catch(() => null)));
+  return results.filter((record): record is ENSAgentRecord => record !== null);
 }
 
 export async function discoverBrokers(): Promise<ENSAgentRecord[]> {
   console.log(`Discovering brokers via ENS (${ENS_DOMAIN})...`);
-  const results = await Promise.all(BROKER_NAMES.map(resolveAgent));
+  const results = await Promise.all(BROKER_NAMES.map((name) => resolveAgent(name).catch(() => null)));
   const active = results.filter((r): r is ENSAgentRecord => r !== null);
   console.log(`  ${active.length}/${BROKER_NAMES.length} brokers found`);
   for (const a of active) console.log(`   ${a.ensName} → providers: ${a.providers}`);

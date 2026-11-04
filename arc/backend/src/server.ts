@@ -3,11 +3,11 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { discoverAgents, ENDPOINT_TO_PROVIDER } from "./ens-resolver.js";
+import { discoverProviderPrices, ENDPOINT_TO_PROVIDER } from "./ens-resolver.js";
 import cors from "cors";
 import { createAsyncCache } from "./async-cache.js";
 import { createInjectiveLimiter } from "./rate-limit.js";
-import { discoveredPrices, listedPrices, priceFor as resolvePrice, providerFor, serviceConfigs } from "./pricing.js";
+import { listedPrices, priceFor as resolvePrice, providerFor, refreshedPrices, serviceConfigs } from "./pricing.js";
 import {
   INJECTIVE_CONTRACTS,
   getInjectiveChainStatus,
@@ -313,11 +313,13 @@ function getStats() {
   return {
     totalPayments: stats.totalPayments,
     totalVolume: stats.totalVolume.toFixed(4),
+    totalVolumeRaw: stats.totalVolume.toString(),
     paymentsPerMin: elapsed > 0 ? Math.round((stats.totalPayments / elapsed) * 60) : 0,
     dollarsPerSec: elapsed > 0 ? (stats.totalVolume / elapsed).toFixed(4) : "0",
     activeWorkers: stats.activeWorkers,
     gasSaved: (stats.totalPayments * 0.30).toFixed(2),
     platformFees: stats.totalFees.toFixed(4),
+    platformFeesRaw: stats.totalFees.toString(),
     elapsed: Math.round(elapsed),
     isRunning: stats.isRunning,
     isStopping: !!activeRun?.signal.aborted,
@@ -439,8 +441,7 @@ const priceFor = (service: string) => resolvePrice(service, ensPrices);
 
 async function loadENSPrices() {
   try {
-    const agents = await discoverAgents();
-    ensPrices = discoveredPrices(agents);
+    ensPrices = refreshedPrices(ensPrices, await discoverProviderPrices());
     console.log("ENS prices loaded:", Object.entries(ensPrices).map(([k,v]) => `${k}=${v}`).join(", "));
   } catch (e) {
     console.log("ENS price load failed, using defaults");

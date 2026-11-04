@@ -9,9 +9,9 @@ const { visibleEvents, visibleStats } = createRequire(import.meta.url)(
 const initial: DashboardBaseline = {
   session: "a", updatedAt: 1_000,
   stats: {
-    totalPayments: 10, totalVolume: "0.1000", paymentsPerMin: 10,
+    totalPayments: 10, totalVolume: "0.1000", totalVolumeRaw: "0.1", paymentsPerMin: 10,
     dollarsPerSec: "0.001", activeWorkers: 0, gasSaved: "3",
-    platformFees: "0.0100", elapsed: 60, isRunning: false,
+    platformFees: "0.0100", platformFeesRaw: "0.01", elapsed: 60, isRunning: false,
   },
 };
 
@@ -27,7 +27,7 @@ test("local Reset keeps identical polled history cleared without mutating server
 test("new activity after clearing remains visible and a new session restores normal totals", () => {
   const next = {
     ...initial, updatedAt: 6_000,
-    stats: { ...initial.stats, totalPayments: 11, totalVolume: "0.1150", platformFees: "0.0115" },
+    stats: { ...initial.stats, totalPayments: 11, totalVolume: "0.1150", totalVolumeRaw: "0.115", platformFees: "0.0115", platformFeesRaw: "0.0115" },
   };
   assert.equal(visibleStats(next, initial).totalPayments, 1);
   assert.equal(visibleStats(next, initial).totalVolume, "0.0150");
@@ -37,4 +37,26 @@ test("new activity after clearing remains visible and a new session restores nor
   );
   assert.deepEqual(visibleStats({ ...next, session: "b" }, initial), next.stats);
   assert.deepEqual(visibleEvents([{ timestamp: 900 }], { ...next, session: "b" }, initial), [{ timestamp: 900 }]);
+});
+
+test("Reset subtracts micropayment totals before display rounding", () => {
+  const baseline = {
+    ...initial,
+    stats: {
+      ...initial.stats, totalPayments: 24, totalVolume: "0.0000",
+      totalVolumeRaw: "0.000048", platformFees: "0.0000", platformFeesRaw: "0.0000048",
+    },
+  };
+  const next = {
+    ...initial, updatedAt: 6_000,
+    stats: {
+      ...initial.stats, totalPayments: 25, totalVolume: "0.0001",
+      totalVolumeRaw: "0.000050", platformFees: "0.0000", platformFeesRaw: "0.0000050",
+    },
+  };
+  const view = visibleStats(next, baseline);
+  assert.equal(view.totalPayments, 1);
+  assert.ok(Math.abs(Number(view.totalVolumeRaw) - 0.000002) < 1e-12);
+  assert.ok(Math.abs(Number(view.platformFeesRaw) - 0.0000002) < 1e-12);
+  assert.equal(view.totalVolume, "0.0000");
 });

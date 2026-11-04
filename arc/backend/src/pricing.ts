@@ -1,5 +1,5 @@
 import { ENDPOINT_TO_PROVIDER } from "./ens-resolver.js";
-import type { ENSAgentRecord } from "./ens-resolver.js";
+import type { ENSAgentRecord, ProviderDiscovery } from "./ens-resolver.js";
 import type { ServiceConfig } from "./services.js";
 
 export const DEFAULT_PRICES: Record<string, string> = {
@@ -38,4 +38,11 @@ export function serviceConfigs(ensPrices: Record<string, string>): ServiceConfig
 
 export function discoveredPrices(agents: Pick<ENSAgentRecord, "name" | "priceUsd">[]) {
   return Object.fromEntries(agents.map((agent) => [agent.name, `$${agent.priceUsd}`]));
+}
+
+export function refreshedPrices(previous: Record<string, string>, discovery: ProviderDiscovery) {
+  const retained = Object.fromEntries(
+    discovery.failed.filter((name) => previous[name] !== undefined).map((name) => [name, previous[name]]),
+  );
+  return { ...retained, ...discoveredPrices(discovery.agents) };
 }

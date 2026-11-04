@@ -56,11 +56,13 @@ export function useWebSocket() {
   const [stats, setStats] = useState<StatsData>({
     totalPayments: 0,
     totalVolume: "0",
+    totalVolumeRaw: "0",
     paymentsPerMin: 0,
     dollarsPerSec: "0",
     activeWorkers: 0,
     gasSaved: "0",
     platformFees: "0",
+    platformFeesRaw: "0",
     elapsed: 0,
     isRunning: false,
   });
@@ -187,11 +189,13 @@ export function useWebSocket() {
     setStats({
       totalPayments: 0,
       totalVolume: "0",
+      totalVolumeRaw: "0",
       paymentsPerMin: 0,
       dollarsPerSec: "0",
       activeWorkers: 0,
       gasSaved: "0",
       platformFees: "0",
+      platformFeesRaw: "0",
       elapsed: 0,
       isRunning: false,
     });
