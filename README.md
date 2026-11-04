@@ -129,3 +129,13 @@ See `arc/backend/src/server.ts` — `BROKER_STRATEGIES` and `executeUniswapTrade
 Each broker has a defined token pair strategy. The Routing API (`/quote` with `routingPreference: BEST_PRICE`) finds optimal paths. Coordination signals fire when risk-on assets are bought.
 
 Real trades on Sepolia: see `arc/backend/trade-history.json`.
+
+## Wallet frontend configuration
+
+Set `NEXT_PUBLIC_WC_PROJECT_ID` to a Reown project you own in both frontend builds. This is a public project identifier, not a wallet private key. The inherited fallback IDs are not a production wallet configuration.
+
+1. Open your project in [Reown Dashboard](https://dashboard.reown.com/) and copy its public project ID.
+2. Add `https://flow-broker-injective.vercel.app` and any approved preview origins to that project's origin allowlist.
+3. Add `NEXT_PUBLIC_WC_PROJECT_ID` in the Vercel project's environment variables for Production/Preview, then redeploy: Next.js embeds `NEXT_PUBLIC_` values at build time.
+
+A Reown configuration/allowlist failure is separate from provider initialization. Rendering a disconnected wallet panel does not verify connection, signing or payment. Never put wallet private keys or seed phrases in frontend environment variables.
