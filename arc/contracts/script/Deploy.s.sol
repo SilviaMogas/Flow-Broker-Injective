@@ -15,13 +15,13 @@ contract Deploy is Script {
     // CRE MockKeystoneForwarder on Arc Testnet
     address constant ARC_FORWARDER = 0x6E9EE680ef59ef64Aa8C7371279c27E496b5eDc1;
 
-    // On other chains (Injective EVM testnet 1439 / mainnet 1776) pass USDC_ADDRESS and optionally FORWARDER.
+    // On other chains (Injective EVM testnet 1439 / mainnet 1776) pass USDC_ADDRESS and FORWARDER (the trusted CRE report forwarder).
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         bool onArc = block.chainid == ARC_TESTNET;
         address USDC = onArc ? vm.envOr("USDC_ADDRESS", ARC_USDC) : vm.envAddress("USDC_ADDRESS");
-        address FORWARDER = vm.envOr("FORWARDER", onArc ? ARC_FORWARDER : deployer);
+        address FORWARDER = onArc ? vm.envOr("FORWARDER", ARC_FORWARDER) : vm.envAddress("FORWARDER");
 
         console.log("Deployer:", deployer);
         console.log("Chain ID:", block.chainid);
