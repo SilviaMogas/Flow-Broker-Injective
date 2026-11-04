@@ -906,7 +906,10 @@ app.post("/cre-run", async (_req, res) => {
   // 3. Settlement Monitor
   if (workflow === "all" || workflow === "settlement") {
     creLog("settlement-monitor", "INFO", "[SIMULATION] Running trigger trigger=cron-trigger@1.0.0");
-    try {
+    if (!SELLER_KEY) {
+      creLog("settlement-monitor", "WARN", "SELLER_KEY not set: Gateway settlement check skipped");
+      results.push({ workflow: "Settlement Monitor", error: "SELLER_KEY not configured", status: "skipped" });
+    } else try {
       const gwClient = new GatewayClient({ chain: "arcTestnet", privateKey: SELLER_KEY! });
       const balances = await gwClient.getBalances();
       

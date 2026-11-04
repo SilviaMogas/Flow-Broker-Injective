@@ -194,7 +194,7 @@ export function BountyPanel({ totalPayments, totalVolume, gasSaved }: Props) {
             {creLogs.length > 0 && (
               <div className="bg-gray-900 rounded p-2 max-h-[160px] overflow-y-auto font-mono text-[9px] text-green-400 space-y-0.5">
                 {creLogs.slice(-25).map((log: any, i: number) => (
-                  <div key={i} className={log.level === "DEBUG" ? "text-gray-600" : "text-green-400"}>
+                  <div key={i} className={log.level === "DEBUG" ? "text-gray-600" : log.level === "ERROR" ? "text-red-400" : log.level === "WARN" ? "text-amber-400" : "text-green-400"}>
                     <span className="text-gray-600">{log.timestamp?.slice(11, 19)}</span>{" "}
                     <span className="text-blue-400">[{log.workflow}]</span>{" "}
                     {log.message}
@@ -206,8 +206,8 @@ export function BountyPanel({ totalPayments, totalVolume, gasSaved }: Props) {
               <div className="space-y-1">
                 {creResults.map((w: any, i: number) => (
                   <div key={i} className="flex items-center justify-between text-[10px] bg-gray-50 rounded px-2 py-1">
-                    <div className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-green-400" /><span>{w.workflow}</span></div>
-                    <span className="text-gray-500 font-mono">{w.summary}</span>
+                    <div className="flex items-center gap-1.5"><div className={`w-1.5 h-1.5 rounded-full ${w.error ? "bg-amber-400" : "bg-green-400"}`} /><span>{w.workflow}</span></div>
+                    <span className={`font-mono ${w.error ? "text-amber-600" : "text-gray-500"}`}>{w.error || w.summary}</span>
                   </div>
                 ))}
               </div>

@@ -40,7 +40,19 @@ export function InjectivePanel() {
 
   useEffect(() => {
     let alive = true;
+    let chainsLoaded = false;
+    const loadChains = () =>
+      fetch(api("/injective/chains"))
+        .then((r) => r.json())
+        .then((j) => {
+          if (!alive) return;
+          setChains(j.chains || []);
+          setContracts(j.contracts || {});
+          chainsLoaded = (j.chains || []).length > 0;
+        })
+        .catch(() => {});
     const load = async () => {
+      if (!chainsLoaded) loadChains();
       try {
         const r = await fetch(api("/injective/markets"));
         const j = await r.json();
@@ -51,14 +63,6 @@ export function InjectivePanel() {
         if (alive) setError(e instanceof Error ? e.message : String(e));
       }
     };
-    fetch(api("/injective/chains"))
-      .then((r) => r.json())
-      .then((j) => {
-        if (!alive) return;
-        setChains(j.chains || []);
-        setContracts(j.contracts || {});
-      })
-      .catch(() => {});
     load();
     const id = setInterval(load, 15000);
     return () => {

@@ -97,7 +97,7 @@ export function IntelligenceSection() {
             Intelligence <span className="font-serif italic text-primary">layer</span>
           </h2>
           <p className="mt-4 text-muted-foreground font-light max-w-2xl mx-auto">
-            10 services your broker can tap into. Pay only for what it uses.
+            11 services your broker can tap into. Pay only for what it uses.
           </p>
         </div>
 
