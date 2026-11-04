@@ -6,11 +6,22 @@ import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { discoverAgents, toServiceConfigs } from "./ens-resolver.js";
 import { SERVICES as FALLBACK_SERVICES } from "./services.js";
 import cors from "cors";
+import {
+  INJECTIVE_CONTRACTS,
+  getInjectiveChainStatus,
+  getInjectiveMarkets,
+  injectiveServiceData,
+  refreshInjectiveMarkets,
+} from "./injective.js";
 
-const SELLER_KEY = process.env.SELLER_KEY as `0x${string}`;
-if (!SELLER_KEY) throw new Error("SELLER_KEY not set");
+// On Vercel the backend runs as a function: no app.listen, no separate WebSocket port, no background timers.
+const ON_VERCEL = !!process.env.VERCEL;
 
-const SELLER_ADDRESS = privateKeyToAccount(SELLER_KEY).address;
+// Without SELLER_KEY the read-only and Injective endpoints still work; paid and Gateway endpoints return 503.
+const SELLER_KEY = process.env.SELLER_KEY as `0x${string}` | undefined;
+if (!SELLER_KEY) console.warn("SELLER_KEY not set: paid x402 and Gateway endpoints are disabled");
+
+const SELLER_ADDRESS = SELLER_KEY ? privateKeyToAccount(SELLER_KEY).address : undefined;
 const PORT = parseInt(process.env.PORT || "8787");
 const WS_PORT = parseInt(process.env.WS_PORT || "8788");
 
@@ -18,7 +29,29 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const gateway = createGatewayMiddleware({ sellerAddress: SELLER_ADDRESS });
+const serviceNames = [
+  "search", "llm", "sentiment", "classify", "data",
+  "embeddings", "translate", "summarize", "vision", "code", "injective"
+];
+
+// The public URL mounts this backend under /api. Paid x402 services already live at /api/<service>;
+// every other route is defined without the prefix, so strip it here.
+app.use((req, _res, next) => {
+  const match = req.url.match(/^\/api(\/[^?]*)?(\?.*)?$/);
+  if (match) {
+    const path = match[1] || "/";
+    const isPaidService = serviceNames.some((name) => path === `/${name}`);
+    if (!isPaidService) req.url = path + (match[2] || "");
+  }
+  next();
+});
+
+function requireSeller(_req: any, res: any, next: any) {
+  if (!SELLER_KEY || !SELLER_ADDRESS) {
+    return res.status(503).json({ error: "SELLER_KEY not configured on this deployment" });
+  }
+  next();
+}
 
 // Platform fee (10% on each intelligence call)
 const PLATFORM_FEE_PCT = 0.10;
@@ -241,14 +274,16 @@ async function _doTrade(brokerName: string, signal: string, confidence: string) 
 }
 
 // WebSocket
-const wss = new WebSocketServer({ port: WS_PORT, host: "0.0.0.0" });
 const wsClients = new Set<WebSocket>();
 
-wss.on("connection", (ws) => {
-  wsClients.add(ws);
-  ws.send(JSON.stringify({ type: "stats", data: getStats() }));
-  ws.on("close", () => wsClients.delete(ws));
-});
+if (!ON_VERCEL) {
+  const wss = new WebSocketServer({ port: WS_PORT, host: "0.0.0.0" });
+  wss.on("connection", (ws) => {
+    wsClients.add(ws);
+    ws.send(JSON.stringify({ type: "stats", data: getStats() }));
+    ws.on("close", () => wsClients.delete(ws));
+  });
+}
 
 function broadcast(event: any) {
   const msg = JSON.stringify(event);
@@ -276,7 +311,35 @@ function getStats() {
 
 // Health
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", agent: "perkmesh", chain: "arc-testnet", services: 10, wsClients: wsClients.size });
+  res.json({
+    status: "ok",
+    agent: "perkmesh",
+    chain: "arc-testnet",
+    chains: ["arc-testnet", "injective-testnet", "injective-mainnet"],
+    services: serviceNames.length,
+    sellerConfigured: !!SELLER_KEY,
+    websocket: !ON_VERCEL,
+    wsClients: wsClients.size,
+  });
+});
+
+// ── Injective ──
+let injectiveFetchedAt = 0;
+async function ensureInjectiveMarkets() {
+  if (Date.now() - injectiveFetchedAt > 15_000) {
+    injectiveFetchedAt = Date.now();
+    await refreshInjectiveMarkets();
+  }
+}
+
+app.get("/injective/markets", async (_req, res) => {
+  await ensureInjectiveMarkets();
+  const { markets, error } = getInjectiveMarkets();
+  res.status(markets.length ? 200 : 502).json({ markets, error, source: "Injective Indexer" });
+});
+
+app.get("/injective/chains", async (_req, res) => {
+  res.json({ chains: await getInjectiveChainStatus(), contracts: INJECTIVE_CONTRACTS });
 });
 
 // Service definitions (prices loaded from ENS on startup)
@@ -332,13 +395,9 @@ function getServiceData(name: string): { data: any; insight: string } {
     },
   };
 
+  if (name === "injective") return injectiveServiceData();
   return map[name] || { data: { value: "received" }, insight: "data processed" };
 }
-
-const serviceNames = [
-  "search", "llm", "sentiment", "classify", "data",
-  "embeddings", "translate", "summarize", "vision", "code"
-];
 
 // Prices from ENS (refreshed periodically)
 let ensPrices: Record<string, string> = {};
@@ -357,7 +416,11 @@ async function loadENSPrices() {
 
 // Load prices on startup and refresh every 30s
 loadENSPrices();
-setInterval(loadENSPrices, 30000);
+if (!ON_VERCEL) {
+  setInterval(loadENSPrices, 30000);
+  refreshInjectiveMarkets();
+  setInterval(refreshInjectiveMarkets, 15000);
+}
 
 const postServices = ["llm", "translate", "summarize", "vision", "code"];
 
@@ -365,7 +428,8 @@ for (const name of serviceNames) {
   const path = `/api/${name}`;
   const method = postServices.includes(name) ? "post" : "get";
   
-  const handler = (req: any, res: any) => {
+  const handler = async (req: any, res: any) => {
+    if (name === "injective") await ensureInjectiveMarkets();
     const payment = req.payment!;
     const price = ensPrices[name] || "$0.000001";
     stats.totalPayments++;
@@ -400,19 +464,22 @@ for (const name of serviceNames) {
   // Dynamic pricing - create fresh gateway middleware each request with current ENS price
   const priceMiddleware = (req: any, res: any, next: any) => {
     const price = ensPrices[name] || "$0.000001";
-    const freshGateway = createGatewayMiddleware({ sellerAddress: SELLER_ADDRESS });
+    const freshGateway = createGatewayMiddleware({ sellerAddress: SELLER_ADDRESS! });
     freshGateway.require(price)(req, res, next);
   };
 
   if (method === "post") {
-    app.post(path, priceMiddleware, handler);
+    app.post(path, requireSeller, priceMiddleware, handler);
   } else {
-    app.get(path, priceMiddleware, handler);
+    app.get(path, requireSeller, priceMiddleware, handler);
   }
 }
 
 // START endpoint - triggers workers
-app.post("/start", async (_req, res) => {
+app.post("/start", requireSeller, async (_req, res) => {
+  if (ON_VERCEL) {
+    return res.status(501).json({ error: "Broker worker loops need a long-running host; they do not run inside Vercel Functions" });
+  }
   if (stats.isRunning) return res.json({ error: "already running" });
 
   stats.isRunning = true;
@@ -459,8 +526,8 @@ app.post("/start", async (_req, res) => {
     { name: "Navigator", providers: ["search", "sentiment", "llm", "code"] },
     { name: "Growth", providers: ["search", "sentiment", "embeddings", "classify", "data"] },
     { name: "Momentum", providers: ["search", "sentiment", "embeddings", "classify", "data", "translate"] },
-    { name: "Apex", providers: ["search", "sentiment", "llm", "embeddings", "classify", "data", "code", "vision"] },
-    { name: "Titan", providers: ["search", "sentiment", "llm", "embeddings", "classify", "data", "code", "vision", "translate", "summarize"] },
+    { name: "Apex", providers: ["search", "sentiment", "llm", "embeddings", "classify", "data", "code", "vision", "injective"] },
+    { name: "Titan", providers: ["search", "sentiment", "llm", "embeddings", "classify", "data", "code", "vision", "translate", "summarize", "injective"] },
   ];
 
   const runWorker = async (idx: number, key: `0x${string}`) => {
@@ -576,9 +643,9 @@ app.get("/prices", (_req, res) => {
 const paymentHistory: any[] = [];
 
 // Gateway batch status - shows real Gateway balances + history
-app.get("/gateway-status", async (_req, res) => {
+app.get("/gateway-status", requireSeller, async (_req, res) => {
   try {
-    const client = new GatewayClient({ chain: "arcTestnet", privateKey: SELLER_KEY });
+    const client = new GatewayClient({ chain: "arcTestnet", privateKey: SELLER_KEY! });
     const balances = await client.getBalances();
     res.json({
       seller: SELLER_ADDRESS,
@@ -839,8 +906,11 @@ app.post("/cre-run", async (_req, res) => {
   // 3. Settlement Monitor
   if (workflow === "all" || workflow === "settlement") {
     creLog("settlement-monitor", "INFO", "[SIMULATION] Running trigger trigger=cron-trigger@1.0.0");
-    try {
-      const gwClient = new GatewayClient({ chain: "arcTestnet", privateKey: SELLER_KEY });
+    if (!SELLER_KEY) {
+      creLog("settlement-monitor", "WARN", "SELLER_KEY not set: Gateway settlement check skipped");
+      results.push({ workflow: "Settlement Monitor", error: "SELLER_KEY not configured", status: "skipped" });
+    } else try {
+      const gwClient = new GatewayClient({ chain: "arcTestnet", privateKey: SELLER_KEY! });
       const balances = await gwClient.getBalances();
       
       creLog("settlement-monitor", "INFO", `[USER LOG] Backend status: ok, services: ${serviceNames.length}`);
@@ -899,12 +969,12 @@ app.get("/trades/history", (_req, res) => {
 });
 
 // Settlement endpoint — called by CRE Settlement Monitor workflow
-app.post("/settle", async (_req, res) => {
+app.post("/settle", requireSeller, async (_req, res) => {
   const { batchId, paymentCount, totalAmount } = _req.body || {};
   creLog("settlement-monitor", "INFO", `[CRE] Settlement request received — batch=${batchId}, count=${paymentCount}, amount=${totalAmount}`);
 
   try {
-    const client = new GatewayClient({ chain: "arcTestnet", privateKey: SELLER_KEY });
+    const client = new GatewayClient({ chain: "arcTestnet", privateKey: SELLER_KEY! });
     const balances = await client.getBalances();
 
     const result = {
@@ -969,7 +1039,11 @@ app.post("/stop", (_req, res) => {
   res.json({ status: "stopped" });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`PerkMesh server on :${PORT} (API) + :${WS_PORT} (WS)`);
-  console.log(`${serviceNames.length} services, seller: ${SELLER_ADDRESS}`);
-});
+if (!ON_VERCEL) {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`PerkMesh server on :${PORT} (API) + :${WS_PORT} (WS)`);
+    console.log(`${serviceNames.length} services, seller: ${SELLER_ADDRESS ?? "not configured"}`);
+  });
+}
+
+export default app;

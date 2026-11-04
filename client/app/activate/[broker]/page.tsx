@@ -97,7 +97,7 @@ const brokerData: Record<BrokerType, {
     ens: "apex.flowbroker.eth",
     monthlyEstimate: "~$50",
     perDecision: "~$0.045",
-    intelligence: ["All 8 core services"],
+    intelligence: ["All 8 core services", "Injective orderbook"],
     color: "bg-amber-500",
     textColor: "text-black",
     category: "Alpha",
@@ -107,7 +107,7 @@ const brokerData: Record<BrokerType, {
     ens: "titan.flowbroker.eth",
     monthlyEstimate: "~$75",
     perDecision: "~$0.060",
-    intelligence: ["All 10 services", "Priority execution"],
+    intelligence: ["All 11 services", "Priority execution"],
     color: "bg-red-600",
     textColor: "text-white",
     category: "Alpha",
@@ -296,7 +296,7 @@ export default function ActivatePage({ params }: { params: Promise<{ broker: str
           {/* Dashboard Link */}
           <div className="text-center">
             <a
-              href={process.env.NEXT_PUBLIC_DASHBOARD_URL || "https://flowbroker-app.netlify.app"}
+              href={process.env.NEXT_PUBLIC_DASHBOARD_URL || "/dashboard"}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 font-medium"

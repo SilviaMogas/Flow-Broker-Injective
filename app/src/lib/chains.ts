@@ -2,6 +2,11 @@ import { defineChain } from "viem";
 
 export const EXPLORER_URL = "https://testnet.arcscan.app";
 
+export { injective, injectiveTestnet } from "viem/chains";
+export const INJECTIVE_EXPLORER_URL = "https://blockscout.injective.network";
+export const INJECTIVE_TESTNET_EXPLORER_URL = "https://testnet.blockscout.injective.network";
+
+
 export const arcTestnet = defineChain({
   id: 5042002,
   name: "Arc Testnet",

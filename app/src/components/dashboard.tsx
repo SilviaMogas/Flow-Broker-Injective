@@ -8,6 +8,7 @@ import { BROKERS, PROVIDERS, providerLabel, brokerLabel } from "@/lib/agents";
 import { FlowView } from "@/components/flow-view";
 import { ActivationsPanel } from "@/components/activations-panel";
 import { BountyPanel } from "@/components/bounty-panel";
+import { InjectivePanel } from "@/components/injective-panel";
 import { LiveTicker } from "@/components/live-ticker";
 
 const MAX_TRADES = 20;
@@ -17,7 +18,7 @@ export function Dashboard() {
   const isRunning = connected && !isComplete;
   const [txCount, setTxCount] = useState("200");
   const [profile, setProfile] = useState("balanced");
-  const [tab, setTab] = useState<"flow" | "calls" | "decisions" | "trades" | "settlement" | "cre" | "ens" | "verify" | "bounty">("flow");
+  const [tab, setTab] = useState<"flow" | "calls" | "decisions" | "trades" | "settlement" | "cre" | "ens" | "injective" | "verify" | "bounty">("flow");
   const [creLogs, setCreLogs] = useState<any[]>([]);
   const [creResults, setCreResults] = useState<any[]>([]);
   const [gwStatus, setGwStatus] = useState<any>(null);
@@ -65,6 +66,7 @@ export function Dashboard() {
     { id: "settlement", label: "Settlement" },
     { id: "cre", label: "CRE" },
     { id: "ens", label: "ENS" },
+    { id: "injective", label: "Injective" },
     { id: "verify", label: "Verify" },
     { id: "bounty", label: "Protocols" },
   ] as const;
@@ -77,11 +79,6 @@ export function Dashboard() {
     [...decisions, ...backendDecisions].forEach(d => { if (d.broker) names.add(d.broker); });
     return Array.from(names).sort();
   }, [decisions, backendDecisions]);
-
-  const filteredDecisions = useMemo(() => {
-    if (brokerFilter === "all") return allDecisions;
-    return allDecisions.filter(d => d.broker === brokerFilter);
-  }, [allDecisions, brokerFilter]);
 
   // Merge WebSocket decisions with backend decisions
   const allDecisions = useMemo(() => {
@@ -96,6 +93,11 @@ export function Dashboard() {
     }
     return merged.sort((a, b) => b.timestamp - a.timestamp);
   }, [decisions, backendDecisions]);
+
+  const filteredDecisions = useMemo(() => {
+    if (brokerFilter === "all") return allDecisions;
+    return allDecisions.filter(d => d.broker === brokerFilter);
+  }, [allDecisions, brokerFilter]);
 
   // Merge WebSocket trades with backend trades (dedup by txHash)
   const allTrades = useMemo(() => {
@@ -499,7 +501,6 @@ export function Dashboard() {
           ))}
         </div>
           </div>
-        </div>
       )}
 
       {/* ── Trades Tab ── */}
@@ -956,6 +957,8 @@ export function Dashboard() {
           </div>
         </div>
       )}
+
+      {tab === "injective" && <InjectivePanel />}
 
       {/* ── Protocols Tab ── */}
       {tab === "bounty" && (

@@ -92,7 +92,7 @@ const pricingPlans = [
     category: "Alpha",
     categoryColor: "bg-amber-500/20 text-amber-400",
     features: [
-      "8 core services",
+      "8 core services + Injective orderbook",
       "Maximum intelligence",
       "High risk",
     ],
@@ -105,7 +105,7 @@ const pricingPlans = [
     category: "Alpha",
     categoryColor: "bg-amber-500/20 text-amber-400",
     features: [
-      "All 10 services",
+      "All 11 services",
       "Priority execution",
       "High risk",
     ],

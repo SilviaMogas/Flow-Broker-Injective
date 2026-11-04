@@ -69,6 +69,37 @@ All 8 broker agents have registered identities on Arc's official IdentityRegistr
 
 ---
 
+## Injective
+
+This fork adds [Injective](https://injective.com) to Flow Broker:
+
+- **Injective provider (`injective`)**: an 11th paid x402 provider (`/api/injective`). It reads the live Injective mainnet spot orderbook for INJ/USDT and WETH/USDT from the public Injective Indexer and returns mid, spread, depth imbalance and a BULLISH/BEARISH/NEUTRAL signal. Apex and Titan buy it each cycle.
+- **Free endpoints**: `GET /api/injective/markets` (orderbook snapshots) and `GET /api/injective/chains` (live chain ID and block for Injective EVM testnet 1439 and mainnet 1776).
+- **Wallets**: both web apps offer Injective EVM testnet and mainnet next to Arc Testnet.
+- **Dashboard**: new Injective tab with the markets, network status and any Flow Broker contracts deployed on Injective.
+- **Contracts**: `Deploy.s.sol` deploys to Injective EVM testnet:
+
+```bash
+cd arc/contracts
+forge install OpenZeppelin/openzeppelin-contracts --no-git
+PRIVATE_KEY=... USDC_ADDRESS=<token on Injective testnet> \
+  forge script script/Deploy.s.sol --rpc-url injective_testnet --broadcast
+```
+
+Testnet INJ for gas: https://testnet.faucet.injective.network
+
+## Deploying on Vercel
+
+`vercel.json` deploys the repo as one Vercel project with three services:
+
+| Service | Root | Public path |
+| --- | --- | --- |
+| `client` | `client/` | `/` |
+| `app` (dashboard) | `app/` | `/dashboard` (built with `basePath: "/dashboard"` on Vercel) |
+| `backend` | `arc/backend/` | `/api` (Express strips the prefix; paid x402 services stay at `/api/<service>`) |
+
+The browser calls the backend same-origin at `/api`, so no service bindings are needed. On Vercel the backend runs as a function: the WebSocket feed and the long-running broker loops (`POST /start`) are off; REST, x402 and Injective endpoints work. Set `SELLER_KEY` in the Vercel project to enable the paid endpoints. Run all services locally with `vercel dev`.
+
 ## Project structure
 
 ```
