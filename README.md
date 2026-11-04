@@ -82,7 +82,7 @@ This fork adds [Injective](https://injective.com) to Flow Broker:
 ```bash
 cd arc/contracts
 forge install OpenZeppelin/openzeppelin-contracts --no-git
-PRIVATE_KEY=... USDC_ADDRESS=<token on Injective testnet> \
+PRIVATE_KEY=... USDC_ADDRESS=<token on Injective testnet> FORWARDER=<trusted CRE forwarder> \
   forge script script/Deploy.s.sol --rpc-url injective_testnet --broadcast
 ```
 

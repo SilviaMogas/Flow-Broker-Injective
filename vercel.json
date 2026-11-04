@@ -16,8 +16,29 @@
     }
   },
   "rewrites": [
-    { "source": "/dashboard/:path*", "destination": { "service": "app" } },
-    { "source": "/api/:path*", "destination": { "service": "backend" } },
-    { "source": "/:path*", "destination": { "service": "client" } }
+    {
+      "source": "/dashboard",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/dashboard/(.*)",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "client"
+      }
+    }
   ]
 }

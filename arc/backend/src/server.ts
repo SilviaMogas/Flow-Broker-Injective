@@ -325,11 +325,24 @@ app.get("/health", (_req, res) => {
 
 // ── Injective ──
 let injectiveFetchedAt = 0;
+let injectiveRefresh: Promise<unknown> | null = null;
 async function ensureInjectiveMarkets() {
-  if (Date.now() - injectiveFetchedAt > 15_000) {
-    injectiveFetchedAt = Date.now();
-    await refreshInjectiveMarkets();
+  if (Date.now() - injectiveFetchedAt <= 15_000) return;
+  injectiveRefresh ??= refreshInjectiveMarkets().finally(() => {
+    // A failed refresh retries after 5 s instead of 15 s.
+    injectiveFetchedAt = getInjectiveMarkets().error ? Date.now() - 10_000 : Date.now();
+    injectiveRefresh = null;
+  });
+  await injectiveRefresh;
+}
+
+async function requireInjectiveData(_req: any, res: any, next: any) {
+  await ensureInjectiveMarkets();
+  const { markets, error } = getInjectiveMarkets();
+  if (!markets.length) {
+    return res.status(503).json({ error: `Injective market data unavailable: ${error ?? "no snapshot"}` });
   }
+  next();
 }
 
 app.get("/injective/markets", async (_req, res) => {
@@ -401,6 +414,9 @@ function getServiceData(name: string): { data: any; insight: string } {
 
 // Prices from ENS (refreshed periodically)
 let ensPrices: Record<string, string> = {};
+// Providers not discovered through ENS keep their listed price.
+const DEFAULT_PRICES: Record<string, string> = { injective: "$0.001" };
+const priceFor = (name: string) => ensPrices[name] || DEFAULT_PRICES[name] || "$0.000001";
 
 async function loadENSPrices() {
   try {
@@ -429,9 +445,8 @@ for (const name of serviceNames) {
   const method = postServices.includes(name) ? "post" : "get";
   
   const handler = async (req: any, res: any) => {
-    if (name === "injective") await ensureInjectiveMarkets();
     const payment = req.payment!;
-    const price = ensPrices[name] || "$0.000001";
+    const price = priceFor(name);
     stats.totalPayments++;
     const priceNum = parseFloat(price.replace("$", ""));
     const fee = priceNum * PLATFORM_FEE_PCT;
@@ -463,15 +478,16 @@ for (const name of serviceNames) {
 
   // Dynamic pricing - create fresh gateway middleware each request with current ENS price
   const priceMiddleware = (req: any, res: any, next: any) => {
-    const price = ensPrices[name] || "$0.000001";
+    const price = priceFor(name);
     const freshGateway = createGatewayMiddleware({ sellerAddress: SELLER_ADDRESS! });
     freshGateway.require(price)(req, res, next);
   };
 
+  const guards = name === "injective" ? [requireSeller, requireInjectiveData] : [requireSeller];
   if (method === "post") {
-    app.post(path, requireSeller, priceMiddleware, handler);
+    app.post(path, ...guards, priceMiddleware, handler);
   } else {
-    app.get(path, requireSeller, priceMiddleware, handler);
+    app.get(path, ...guards, priceMiddleware, handler);
   }
 }
 
@@ -636,7 +652,7 @@ app.get("/registry", async (_req, res) => {
 
 // Current ENS prices
 app.get("/prices", (_req, res) => {
-  res.json(ensPrices);
+  res.json({ ...DEFAULT_PRICES, ...ensPrices });
 });
 
 // Payment history (kept in memory for demo)
@@ -880,9 +896,9 @@ app.post("/cre-run", async (_req, res) => {
       creLog("dynamic-pricing", "INFO", `[USER LOG] ETH/USD: $${ethPrice}`);
       
       const agentPrices = serviceNames.map(name => {
-        const base = parseFloat((ensPrices[name] || "$0.001").replace("$", ""));
+        const base = parseFloat((ensPrices[name] || DEFAULT_PRICES[name] || "$0.001").replace("$", ""));
         const adj = Math.max(-0.5, Math.min(0.5, (ethPrice - 2000) / 20000));
-        return { agent: name, currentPrice: ensPrices[name] || "$0.001", adjustedPrice: `$${(base * (1 + adj)).toFixed(6)}` };
+        return { agent: name, currentPrice: ensPrices[name] || DEFAULT_PRICES[name] || "$0.001", adjustedPrice: `$${(base * (1 + adj)).toFixed(6)}` };
       });
 
       creLog("dynamic-pricing", "INFO", `[USER LOG] Prices: [${agentPrices.map(p => p.adjustedPrice).join(", ")}]`);
