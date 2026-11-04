@@ -1,4 +1,3 @@
-import { ActivatePage } from "./page"
 
 export function generateStaticParams() {
   return [

@@ -1,5 +1,8 @@
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { defineChain } from "viem";
+import { injective, injectiveTestnet } from "viem/chains";
+
+export { injective, injectiveTestnet };
 
 export const arcTestnet = defineChain({
   id: 5042002,
@@ -18,7 +21,7 @@ export const arcTestnet = defineChain({
 export const wagmiConfig = getDefaultConfig({
   appName: "Flow Broker",
   projectId: process.env.NEXT_PUBLIC_WC_PROJECT_ID || "a439946a4066ac956330bf09c0080f0c",
-  chains: [arcTestnet],
+  chains: [arcTestnet, injectiveTestnet, injective],
   ssr: false,
   multiInjectedProviderDiscovery: false,
 });

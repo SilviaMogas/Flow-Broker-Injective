@@ -296,7 +296,7 @@ export default function ActivatePage({ params }: { params: Promise<{ broker: str
           {/* Dashboard Link */}
           <div className="text-center">
             <a
-              href={process.env.NEXT_PUBLIC_DASHBOARD_URL || "https://flowbroker-app.netlify.app"}
+              href={process.env.NEXT_PUBLIC_DASHBOARD_URL || "/dashboard"}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 font-medium"

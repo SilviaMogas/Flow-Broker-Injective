@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { api } from "@/lib/dashboard/api";
 
 const BROKER_WALLETS: Record<string, `0x${string}`> = {
   guardian:   "0xea108a5074772f700Dc84c76F180b11285be6d8d",
@@ -61,7 +62,7 @@ export function WalletActivation({ brokerName, depositAmount }: Props) {
         // Send activation to backend when payment confirms
         if (isSuccess && txHash && !done) {
           setDone(true);
-          fetch("https://api.perkmesh.perkos.xyz/activate", {
+          fetch(api("/activate"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ broker: brokerName, txHash, userAddress: address }),
@@ -70,7 +71,7 @@ export function WalletActivation({ brokerName, depositAmount }: Props) {
 
         // Notify backend about this activation
         if (isSuccess && txHash) {
-          fetch("https://api.perkmesh.perkos.xyz/activate", {
+          fetch(api("/activate"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ broker: brokerName, txHash, userAddress: address }),
@@ -92,7 +93,7 @@ export function WalletActivation({ brokerName, depositAmount }: Props) {
                 View on ArcScan → {txHash.slice(0, 20)}...
               </a>
             )}
-            <a href={process.env.NEXT_PUBLIC_DASHBOARD_URL || "https://flowbroker-app.netlify.app"} target="_blank" rel="noopener noreferrer"
+            <a href={process.env.NEXT_PUBLIC_DASHBOARD_URL || "/dashboard"} target="_blank" rel="noopener noreferrer"
               className="block w-full py-4 text-center rounded-lg bg-primary text-primary-foreground text-lg font-medium hover:bg-primary/90 transition-colors">
               🚀 View Live Dashboard →
             </a>

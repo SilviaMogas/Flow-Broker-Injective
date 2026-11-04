@@ -47,9 +47,10 @@ export type WSEvent =
   | { type: "trade"; data: any }
   | { type: "broker_decision"; data: any }
   | { type: "started"; data: any }
-  | { type: "stopped"; data: any };
+  | { type: "stopped"; data: any }
+  | { type: "reset"; data: any };
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3002";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? (process.env.NODE_ENV === "development" ? "ws://localhost:3002" : "");
 
 export function useWebSocket() {
   const [connected, setConnected] = useState(false);
@@ -73,7 +74,7 @@ export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (!WS_URL || wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;

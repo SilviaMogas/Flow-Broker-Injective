@@ -6,8 +6,8 @@ export const BROKERS = [
   { id: "navigator", erc8004: "1451", label: "Navigator", profile: "Balanced", providers: ["search", "sentiment", "llm", "code"], cost: "~$15/mo", desc: "Full analysis + Optimizer", risk: "Medium", rep: 5 },
   { id: "growth", erc8004: "1452", label: "Growth", profile: "Growth", providers: ["search", "sentiment", "embeddings", "classify", "data"], cost: "~$25/mo", desc: "5 intelligence services", risk: "Med-High", rep: 4 },
   { id: "momentum", erc8004: "1453", label: "Momentum", profile: "Growth", providers: ["search", "sentiment", "embeddings", "classify", "data", "translate"], cost: "~$35/mo", desc: "6 services + On-chain", risk: "Med-High", rep: 3 },
-  { id: "apex", erc8004: "1454", label: "Apex", profile: "Alpha", providers: ["search", "sentiment", "llm", "embeddings", "classify", "data", "code", "vision"], cost: "~$50/mo", desc: "8 core services", risk: "High", rep: 4 },
-  { id: "titan", erc8004: "1455", label: "Titan", profile: "Alpha", providers: ["search", "sentiment", "llm", "embeddings", "classify", "data", "code", "vision", "translate", "summarize"], cost: "~$75/mo", desc: "All 10 services", risk: "High", rep: 5 },
+  { id: "apex", erc8004: "1454", label: "Apex", profile: "Alpha", providers: ["search", "sentiment", "llm", "embeddings", "classify", "data", "code", "vision", "injective"], cost: "~$50/mo", desc: "8 core services + Injective orderbook", risk: "High", rep: 4 },
+  { id: "titan", erc8004: "1455", label: "Titan", profile: "Alpha", providers: ["search", "sentiment", "llm", "embeddings", "classify", "data", "code", "vision", "translate", "summarize", "injective"], cost: "~$75/mo", desc: "All 11 services", risk: "High", rep: 5 },
 ];
 
 // Provider agents (sellers) — intelligence services
@@ -22,6 +22,7 @@ export const PROVIDERS: Record<string, { label: string; type: string; price: str
   code: { label: "Portfolio optimizer", type: "MPT allocation, rebalancing signals", price: "$0.005/call", ens: "compute.flowbroker.eth" },
   vision: { label: "Execution optimizer", type: "Smart order routing, slippage minimization", price: "$0.002/call", ens: "chart-analyzer.flowbroker.eth" },
   summarize: { label: "Report generator", type: "Decision summary for your dashboard", price: "$0.015/call", ens: "summarizer.flowbroker.eth" },
+  injective: { label: "Injective orderbook", type: "Live INJ spot book: mid, spread, depth imbalance", price: "$0.001/call", ens: "injective.flowbroker.eth" },
 };
 
 export function providerLabel(name: string) {
