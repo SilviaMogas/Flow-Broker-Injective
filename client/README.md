@@ -2,6 +2,8 @@
 
 Landing page, broker quiz, and USDC payment flow. Users discover which broker fits their risk profile and deposit USDC to activate it.
 
+The payment flow describes the original upstream integration, not a verified deposit flow for this fork. Without an owned `NEXT_PUBLIC_WC_PROJECT_ID`, wallet, network-add and deposit controls are disabled. Public browsing still works; see the root README before enabling wallet UI or funding inherited addresses.
+
 ## User flow
 
 ```mermaid
@@ -56,5 +58,5 @@ cd client
 npm install
 
 # Uses Reown WalletConnect
-NEXT_PUBLIC_WC_PROJECT_ID=a439946a4066ac956330bf09c0080f0c npm run dev
+NEXT_PUBLIC_WC_PROJECT_ID="your_owned_32_character_hex_project_id" npm run dev
 ```
