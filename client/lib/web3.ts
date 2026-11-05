@@ -22,7 +22,7 @@ export const wagmiConfig = getDefaultConfig({
   appName: "Flow Broker",
   projectId: process.env.NEXT_PUBLIC_WC_PROJECT_ID || "a439946a4066ac956330bf09c0080f0c",
   chains: [arcTestnet, injectiveTestnet, injective],
-  ssr: false,
+  ssr: true,
   multiInjectedProviderDiscovery: false,
 });
 
