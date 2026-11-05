@@ -8,13 +8,13 @@ export const walletConfigured = /^[a-f0-9]{32}$/i.test(projectId);
 const chainConfig = {
   chains: [arcTestnet, injectiveTestnet, injective],
   ssr: true,
-  multiInjectedProviderDiscovery: false,
 } as const;
 
 export const config = walletConfigured
   ? getDefaultConfig({ ...chainConfig, appName: "Flow Broker", projectId })
   : createConfig({
       ...chainConfig,
+      multiInjectedProviderDiscovery: false,
       connectors: [],
       transports: {
         [arcTestnet.id]: http(),
