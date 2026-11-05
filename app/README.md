@@ -2,6 +2,8 @@
 
 Real-time visualization of the agent economy. Shows 8 brokers buying intelligence from 10 providers, executing Uniswap trades, and coordinating through the network.
 
+This describes the original upstream integration. In this fork, Injective data is live, other provider signals remain simulated, and Vercel uses read-only HTTP polling with Start disabled. Wallet/payment/trading execution is not verified; see the root README for deployment and owned-wallet setup.
+
 ## What you see
 
 ```mermaid
@@ -41,12 +43,9 @@ graph LR
 cd app
 npm install
 
-# Create .env.local
-echo "NEXT_PUBLIC_WS_URL=wss://api.perkmesh.perkos.xyz/ws" > .env.local
-echo "NEXT_PUBLIC_BACKEND_URL=https://api.perkmesh.perkos.xyz" >> .env.local
-
-npm run dev
+# Read-only dashboard against your separately running local backend
+NEXT_PUBLIC_BACKEND_URL=http://localhost:3001 NEXT_PUBLIC_WS_URL= npm run dev
 # Opens at http://localhost:3000
 ```
 
-The dashboard connects to the production backend — no local server needed.
+Run your own backend at that local address; the dashboard no longer defaults to the original project's API. For the combined Vercel deployment, use `/api` and leave `NEXT_PUBLIC_WS_URL` empty. Without an owned `NEXT_PUBLIC_WC_PROJECT_ID`, wallet controls stay disabled.

@@ -5,9 +5,9 @@ import Link from "next/link"
 import { Navigation } from "@/components/navigation"
 import { Footer } from "@/components/footer"
 import { Card } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Wallet, ArrowRight, Shield, Zap } from "lucide-react"
+import { walletConfigured } from "@/lib/web3"
+import { Shield, Zap } from "lucide-react"
 import dynamic from "next/dynamic"
 const WalletActivation = dynamic(() => import("@/components/broker/wallet-activation").then(m => m.WalletActivation), { ssr: false, loading: () => <div className="h-14 bg-gray-100 rounded animate-pulse" /> })
 import { useState } from "react"
@@ -139,7 +139,6 @@ const perDecisionValues: Record<BrokerType, number> = {
 export default function ActivatePage({ params }: { params: Promise<{ broker: string }> }) {
   const { broker: brokerParam } = use(params)
   const [depositAmount, setDepositAmount] = useState("")
-  const [isConnecting, setIsConnecting] = useState(false)
   
   const brokerKey = brokerParam as BrokerType
   const broker = brokerData[brokerKey] || brokerData.navigator
@@ -222,6 +221,7 @@ export default function ActivatePage({ params }: { params: Promise<{ broker: str
               <div className="relative">
                 <Input
                   type="number"
+                  disabled={!walletConfigured}
                   placeholder="Enter amount"
                   value={depositAmount}
                   onChange={(e) => setDepositAmount(e.target.value)}
@@ -238,8 +238,9 @@ export default function ActivatePage({ params }: { params: Promise<{ broker: str
               {suggestedAmounts.map((amount) => (
                 <button
                   key={amount}
+                  disabled={!walletConfigured}
                   onClick={() => setDepositAmount(String(amount))}
-                  className={`px-4 py-2 rounded-lg border text-sm transition-colors ${
+                  className={`px-4 py-2 rounded-lg border text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     depositAmount === String(amount)
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border text-muted-foreground hover:border-primary/50"
@@ -270,7 +271,10 @@ export default function ActivatePage({ params }: { params: Promise<{ broker: str
             {/* Add Arc Testnet to MetaMask */}
             <div className="text-center mb-2">
               <button
+                disabled={!walletConfigured}
+                title={walletConfigured ? undefined : "Wallet setup required"}
                 onClick={async () => {
+                  if (!walletConfigured) return;
                   if (typeof window !== "undefined" && window.ethereum) {
                     await window.ethereum.request({
                       method: "wallet_addEthereumChain",
@@ -284,7 +288,7 @@ export default function ActivatePage({ params }: { params: Promise<{ broker: str
                     });
                   }
                 }}
-                className="text-xs text-muted-foreground underline hover:text-primary"
+                className="text-xs text-muted-foreground underline hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
               >
                 + Add Arc Testnet to MetaMask
               </button>

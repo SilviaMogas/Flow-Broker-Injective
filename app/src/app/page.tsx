@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { Dashboard } from "@/components/dashboard";
+import { walletConfigured } from "@/lib/wagmi";
 
 const Providers = dynamic(
   () => import("./providers").then((m) => m.Providers),
@@ -29,7 +30,11 @@ export default function Home() {
                 </p>
               </div>
             </div>
-            <ConnectButton />
+            {walletConfigured ? <ConnectButton /> : (
+              <button disabled title="The site owner must configure an owned Reown project ID and allow this origin." className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground cursor-not-allowed">
+                Wallet setup required
+              </button>
+            )}
           </div>
         </header>
 

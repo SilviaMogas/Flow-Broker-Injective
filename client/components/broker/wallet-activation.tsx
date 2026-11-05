@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ComponentType } from "react";
 import { api } from "@/lib/dashboard/api";
+import { walletConfigured } from "@/lib/web3";
 
 const BROKER_WALLETS: Record<string, `0x${string}`> = {
   guardian:   "0xea108a5074772f700Dc84c76F180b11285be6d8d",
@@ -20,9 +21,10 @@ const ARC_ID = 5042002;
 interface Props { brokerName: string; depositAmount: string; }
 
 export function WalletActivation({ brokerName, depositAmount }: Props) {
-  const [Component, setComponent] = useState<any>(null);
+  const [Component, setComponent] = useState<ComponentType<Props> | null>(null);
 
   useEffect(() => {
+    if (!walletConfigured) return;
     Promise.all([
       import("wagmi"),
       import("viem"),
@@ -123,9 +125,20 @@ export function WalletActivation({ brokerName, depositAmount }: Props) {
         );
       }
 
-      setComponent(() => ({ brokerName, depositAmount }: Props) => <Inner brokerName={brokerName} depositAmount={depositAmount} />);
+      setComponent(() => function Activation(props: Props) {
+        return <Inner {...props} />;
+      });
     });
   }, []);
+
+  if (!walletConfigured) return (
+    <div className="rounded-lg border border-border p-4 text-center space-y-2">
+      <p className="font-medium">Wallet setup required</p>
+      <p className="text-sm text-muted-foreground">
+        The site owner must configure an owned Reown project and allow this site before wallet activation is available. You can still explore brokers and public Injective data.
+      </p>
+    </div>
+  );
 
   if (!Component) return (
     <div className="w-full h-14 rounded-lg border border-border flex items-center justify-center text-muted-foreground text-sm animate-pulse">

@@ -1,5 +1,7 @@
 # Flow Broker
 
+> **Fork status:** Injective market and chain data are live; other provider signals remain simulated. Wallet activation, payments and trading have not been verified for this fork. Vercel disables broker loops and WebSockets. The upstream features and historical addresses below are not evidence of production readiness.
+
 8 AI broker agents that autonomously buy financial intelligence, execute trades via Uniswap, and report back to users — paying per API call using Circle Arc nanopayments.
 
 Think of it as your personal AI hedge fund. Pick a risk profile, deposit USDC, and your broker goes to work.
@@ -45,7 +47,9 @@ All 8 broker agents have registered identities on Arc's official IdentityRegistr
 
 ---
 
-## Live
+## Original upstream demo
+
+These historical demo links belong to the original project, not this fork's deployment or wallet allowlist. This fork is at https://flow-broker-injective.vercel.app with its dashboard at `/dashboard` and API at `/api`.
 
 | | URL |
 |---|---|
@@ -132,10 +136,12 @@ Real trades on Sepolia: see `arc/backend/trade-history.json`.
 
 ## Wallet frontend configuration
 
-Set `NEXT_PUBLIC_WC_PROJECT_ID` to a Reown project you own in both frontend builds. This is a public project identifier, not a wallet private key. The inherited fallback IDs are not a production wallet configuration.
+Set `NEXT_PUBLIC_WC_PROJECT_ID` to a Reown project you own in both frontend builds. This is a public 32-character hexadecimal project identifier, not a wallet private key. There is no upstream/placeholder fallback: absent or malformed IDs leave the apps read-only with **Wallet setup required**, no wallet connectors, and no Reown initialization. A valid-looking ID does not establish ownership or an allowed origin.
 
 1. Open your project in [Reown Dashboard](https://dashboard.reown.com/) and copy its public project ID.
 2. Add `https://flow-broker-injective.vercel.app` and any approved preview origins to that project's origin allowlist.
 3. Add `NEXT_PUBLIC_WC_PROJECT_ID` in the Vercel project's environment variables for Production/Preview, then redeploy: Next.js embeds `NEXT_PUBLIC_` values at build time.
 
 A Reown configuration/allowlist failure is separate from provider initialization. Rendering a disconnected wallet panel does not verify connection, signing or payment. Never put wallet private keys or seed phrases in frontend environment variables.
+
+Wallet configuration only enables the wallet UI. Arc contracts and broker payment addresses are inherited from upstream: verify deployment and ownership before funding them. Remaining high-severity wallet-SDK advisories and end-to-end payment validation must be addressed separately before paid use.
